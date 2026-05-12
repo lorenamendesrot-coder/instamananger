@@ -1,29 +1,32 @@
 import { Routes, Route, useLocation } from "react-router-dom";
 import { useEffect, useState, useCallback, useRef, createContext, useContext } from "react";
 
-import Accounts   from "./pages/Accounts.jsx";
-import Queue      from "./pages/Queue.jsx";
-import History    from "./pages/History.jsx";
-import Warmup     from "./pages/Warmup.jsx";
-import Protection from "./pages/Protection.jsx";
-import Logs       from "./pages/Logs.jsx";
-import Insights   from "./pages/Insights.jsx";
+// Páginas
+import Accounts from "./pages/Accounts.jsx";
+import Queue     from "./pages/Queue.jsx";
+import History   from "./pages/History.jsx";
+import Warmup      from "./pages/Warmup.jsx";
+import Protection  from "./pages/Protection.jsx";
+import Logs        from "./pages/Logs.jsx";
+import Insights    from "./pages/Insights.jsx";
 
-import { useAccounts }      from "./useAccounts.js";
-import { useToast }         from "./useToast.js";
+// Hooks e componentes isolados
+import { useAccounts }     from "./useAccounts.js";
+import { useToast }        from "./useToast.js";
 import { useServiceWorker } from "./useServiceWorker.js";
-import { useTokenCheck }    from "./useTokenCheck.js";
-import { useOAuthUrl }      from "./useOAuthUrl.js";
-import { useOAuthPopup }    from "./useOAuthPopup.js";
-import { dbGetAll, dbPut, dbPutMany, dbClear } from "./useDB.js";
-import Sidebar         from "./Sidebar.jsx";
-import Toast           from "./Toast.jsx";
+import { useTokenCheck }   from "./useTokenCheck.js";
+import { useOAuthUrl }     from "./useOAuthUrl.js";
+import { useOAuthPopup }  from "./useOAuthPopup.js";
+import { dbGetAll, dbPut, dbPutMany, dbDelete, dbClear } from "./useDB.js";
+import Sidebar from "./Sidebar.jsx";
+import Toast   from "./Toast.jsx";
 import MobileBottomNav from "./MobileBottomNav.jsx";
 
 export { useAccounts };
 
-// ─── HistoryContext ───────────────────────────────────────────────────────────
+// ─── History Context — instância única compartilhada ─────────────────────────
 const HistoryContext = createContext(null);
+
 export const useHistory = () => useContext(HistoryContext);
 
 function HistoryProvider({ children }) {
@@ -38,13 +41,15 @@ function HistoryProvider({ children }) {
   }, []);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // Escuta evento do SW para recarregar
   useEffect(() => {
     const h = () => reload();
     window.addEventListener("sw:queue-update", h);
     return () => window.removeEventListener("sw:queue-update", h);
   }, [reload]);
 
-  const addEntry     = useCallback(async (entry) => { await dbPut("history", entry); reload(); }, [reload]);
+  const addEntry    = useCallback(async (entry) => { await dbPut("history", entry); reload(); }, [reload]);
   const clearHistory = useCallback(async () => { await dbClear("history"); setHistory([]); setTotalCount(0); }, []);
 
   return (
@@ -54,7 +59,7 @@ function HistoryProvider({ children }) {
   );
 }
 
-// ─── WarmupContext ────────────────────────────────────────────────────────────
+// ─── WarmupContext — persiste arquivos de upload entre trocas de aba ──────────
 const WarmupContext = createContext(null);
 export const useWarmupFiles = () => useContext(WarmupContext);
 
@@ -89,17 +94,16 @@ function WarmupProvider({ children }) {
     </WarmupContext.Provider>
   );
 }
-
-// ─── SchedulerContext — declarado ANTES de useScheduler e SchedulerProvider ───
 const SchedulerContext = createContext(null);
 export const useScheduler = () => useContext(SchedulerContext);
 
+// Helpers para a fila no Blobs (acessível de qualquer dispositivo)
 const qApi = {
-  getAll: ()      => fetch("/api/queue").then((r) => r.json()).catch(() => []),
-  save:   (items) => fetch("/api/queue", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Array.isArray(items) ? items : [items]) }).catch(() => {}),
-  update: (item)  => fetch("/api/queue", { method: "PUT",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(item) }).then((r) => r.json()).catch(() => item),
-  remove: (id)    => fetch(`/api/queue?id=${id}`, { method: "DELETE" }).catch(() => {}),
-  clear:  ()      => fetch("/api/queue", { method: "DELETE" }).catch(() => {}),
+  getAll:  ()       => fetch("/api/queue").then((r) => r.json()).catch(() => []),
+  save:    (items)  => fetch("/api/queue", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Array.isArray(items) ? items : [items]) }).catch(() => {}),
+  update:  (item)   => fetch("/api/queue", { method: "PUT",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(item) }).then((r) => r.json()).catch(() => item),
+  remove:  (id)     => fetch(`/api/queue?id=${id}`, { method: "DELETE" }).catch(() => {}),
+  clear:   ()       => fetch("/api/queue", { method: "DELETE" }).catch(() => {}),
 };
 
 function SchedulerProvider({ addEntry, children }) {
@@ -109,7 +113,9 @@ function SchedulerProvider({ addEntry, children }) {
   const reload = useCallback(async () => {
     const all = await qApi.getAll();
     if (!Array.isArray(all)) return;
+    all.sort((a, b) => (a.scheduledAt || 0) - (b.scheduledAt || 0));
     setQueue(all);
+    // Espelha no IndexedDB local para o SW
     try { await dbClear("queue"); await dbPutMany("queue", all); } catch {}
   }, []);
 
@@ -120,13 +126,15 @@ function SchedulerProvider({ addEntry, children }) {
     return () => window.removeEventListener("sw:queue-update", h);
   }, [reload]);
 
+  // ─── Tick do scheduler ───────────────────────────────────────────────────────
   useEffect(() => {
-    // Reseta itens "running" travados ao iniciar
+    // Reseta itens "running" travados
     const resetStuck = async () => {
       const all = await qApi.getAll();
       if (!Array.isArray(all)) return;
-      for (const item of all.filter((x) => x.status === "running")) {
-        await qApi.update({ ...item, status: "pending" });
+      const stuck = all.filter((x) => x.status === "running");
+      for (const item of stuck) {
+        await qApi.update({ ...item, status: "pending", scheduledAt: Date.now() + 5000 });
       }
     };
     resetStuck().catch(() => {});
@@ -134,24 +142,11 @@ function SchedulerProvider({ addEntry, children }) {
     const tick = async () => {
       const all = await qApi.getAll();
       if (!Array.isArray(all)) return;
-      const now = Date.now();
+      const now    = Date.now();
+      const due    = all.filter((x) => !x.type && x.scheduledAt <= now && x.status === "pending");
+      const dueFin = all.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now);
 
-      // ── Itens de finalização de vídeo (video_finish) ──────────────────────
-      const dueFin = all.filter(
-        (x) => x.type === "video_finish" && x.status === "pending" && !runningRef.current.has(x.id)
-      );
-
-      // ── Posts normais com horário chegado ─────────────────────────────────
-      const due = all.filter(
-        (x) =>
-          x.type !== "video_finish" &&
-          x.status === "pending" &&
-          x.scheduledAt &&
-          new Date(x.scheduledAt).getTime() <= now &&
-          !runningRef.current.has(x.id)
-      );
-
-      // Processa video_finish
+      // Processar video_finish
       for (const vf of dueFin) {
         if (runningRef.current.has(vf.id)) continue;
         runningRef.current.add(vf.id);
@@ -168,44 +163,40 @@ function SchedulerProvider({ addEntry, children }) {
           if (!res.ok) throw new Error(`publish-finish HTTP ${res.status}`);
           const data   = await res.json();
           const result = (data.results || [])[0];
-
           if (result?.success) {
-            const all2      = await dbGetAll("history");
+            const all2 = await dbGetAll("history");
             const histEntry = all2.find((h) => h.id === vf.historyId) || null;
             if (histEntry) {
-              await dbPut("history", {
-                ...histEntry,
-                results:          [...(histEntry.results || []).filter((r) => r.account_id !== vf.account_id), result],
-                pending_accounts: (histEntry.pending_accounts || []).filter((a) => a.account_id !== vf.account_id),
-              });
+              const prevResults    = (histEntry.results || []).filter((r) => r.account_id !== vf.account_id);
+              const updatedResults = [...prevResults, result];
+              const updatedPending = (histEntry.pending_accounts || []).filter((a) => a.account_id !== vf.account_id);
+              await dbPut("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
             }
             await qApi.update({ ...vf, status: "done", result, finishedAt: new Date().toISOString() });
           } else if (result && !result.success) {
-            const all2      = await dbGetAll("history");
+            const all2 = await dbGetAll("history");
             const histEntry = all2.find((h) => h.id === vf.historyId) || null;
             if (histEntry) {
-              await dbPut("history", {
-                ...histEntry,
-                results:          [...(histEntry.results || []), { account_id: vf.account_id, username: vf.username, success: false, error: result.error }],
-                pending_accounts: (histEntry.pending_accounts || []).filter((a) => a.account_id !== vf.account_id),
-              });
+              const updatedResults = [...(histEntry.results || []), { account_id: vf.account_id, username: vf.username, success: false, error: result.error }];
+              const updatedPending = (histEntry.pending_accounts || []).filter((a) => a.account_id !== vf.account_id);
+              await dbPut("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
             }
             await qApi.update({ ...vf, status: "error", error: result.error });
           } else {
             const attempts = (vf.attempts || 0) + 1;
-            await qApi.update(
-              attempts >= (vf.maxAttempts || 20)
-                ? { ...vf, status: "error", error: "Timeout: vídeo não processou" }
-                : { ...vf, attempts }
-            );
+            if (attempts >= (vf.maxAttempts || 20)) {
+              await qApi.update({ ...vf, status: "error", error: "Timeout: vídeo não processou" });
+            } else {
+              await qApi.update({ ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
+            }
           }
         } catch (err) {
           const attempts = (vf.attempts || 0) + 1;
-          await qApi.update(
-            attempts >= (vf.maxAttempts || 20)
-              ? { ...vf, status: "error", error: err.message }
-              : { ...vf, attempts }
-          ).catch(() => {});
+          if (attempts >= (vf.maxAttempts || 20)) {
+            await qApi.update({ ...vf, status: "error", error: err.message }).catch(() => {});
+          } else {
+            await qApi.update({ ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 }).catch(() => {});
+          }
         } finally {
           runningRef.current.delete(vf.id);
         }
@@ -214,7 +205,6 @@ function SchedulerProvider({ addEntry, children }) {
 
       if (!due.length) return;
 
-      // Processa posts normais
       for (const item of due) {
         if (runningRef.current.has(item.id)) continue;
         runningRef.current.add(item.id);
@@ -226,11 +216,12 @@ function SchedulerProvider({ addEntry, children }) {
 
           for (let mi = 0; mi < urlsToPost.length; mi++) {
             const mediaUrl = urlsToPost[mi];
-            if (mi > 0) await new Promise((r) => setTimeout(r, 3000));
+            if (mi > 0) await new Promise(r => setTimeout(r, 3000));
 
-            let res = null, lastErr = null;
-            for (let attempt = 0; attempt < 3; attempt++) {
-              if (attempt > 0) await new Promise((r) => setTimeout(r, 5000 * Math.pow(3, attempt - 1)));
+            const MAX_RETRIES = 3;
+            let res, lastErr;
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+              if (attempt > 0) await new Promise(r => setTimeout(r, 5000 * Math.pow(3, attempt - 1)));
               try {
                 res = await fetch("/.netlify/functions/publish", {
                   method: "POST",
@@ -252,35 +243,56 @@ function SchedulerProvider({ addEntry, children }) {
             }
 
             if (!res || !res.ok) throw lastErr || new Error(`HTTP ${res?.status}`);
-            const data            = await res.json();
-            const results         = data.results || [];
+            const data    = await res.json();
+            const results = data.results || [];
+
             const pendingResults  = results.filter((r) => r.pending && r.creation_id);
             const finishedResults = results.filter((r) => !r.pending);
             const historyId       = `h-${Date.now()}-${mi}`;
 
             for (const pr of pendingResults) {
+              const vfId = `vf-${historyId}-${pr.account_id}`;
               await qApi.save({
-                id: `vf-${historyId}-${pr.account_id}`, type: "video_finish", status: "pending",
-                creation_id: pr.creation_id, account_id: pr.account_id,
-                username: pr.username || pr.account_id, accounts: item.accounts,
-                historyId, mediaUrl, postType: item.postType, mediaType: item.mediaType,
-                caption: item.caption || "", createdAt: new Date().toISOString(),
-                attempts: 0, maxAttempts: 20,
+                id:          vfId,
+                type:        "video_finish",
+                status:      "pending",
+                creation_id: pr.creation_id,
+                account_id:  pr.account_id,
+                username:    pr.username || pr.account_id,
+                accounts:    item.accounts,
+                scheduledAt: Date.now() + 30000,
+                historyId,
+                mediaUrl,
+                postType:    item.postType,
+                mediaType:   item.mediaType,
+                caption:     item.caption || "",
+                createdAt:   new Date().toISOString(),
+                attempts:    0,
+                maxAttempts: 20,
               });
             }
 
+            const pendingAccounts = pendingResults.map((r) => ({
+              account_id: r.account_id,
+              username:   r.username || r.account_id,
+            }));
+
             await addEntry({
-              id: historyId, post_type: item.postType, media_url: mediaUrl,
-              media_type: item.mediaType, default_caption: item.caption,
-              results: finishedResults,
-              pending_accounts: pendingResults.map((r) => ({ account_id: r.account_id, username: r.username || r.account_id })),
-              created_at: new Date().toISOString(),
+              id:               historyId,
+              post_type:        item.postType,
+              media_url:        mediaUrl,
+              media_type:       item.mediaType,
+              default_caption:  item.caption,
+              results:          finishedResults,
+              pending_accounts: pendingAccounts,
+              created_at:       new Date().toISOString(),
+              from_scheduler:   true,
+              source:           item.warmup ? "warmup" : "schedule",
             });
           }
 
           if (item.loop) {
-            const next = new Date(Date.now() + (item.loopIntervalMs || 86400000));
-            await qApi.update({ ...item, status: "pending", scheduledAt: next.toISOString() });
+            await qApi.update({ ...item, status: "pending", scheduledAt: item.scheduledAt + 86400000, runCount: (item.runCount || 0) + 1 });
           } else {
             await qApi.update({ ...item, status: "done" });
           }
@@ -298,13 +310,17 @@ function SchedulerProvider({ addEntry, children }) {
     return () => clearInterval(iv);
   }, [addEntry, reload]);
 
-  const addBatch   = async (items) => {
-    for (let i = 0; i < items.length; i += 100) await qApi.save(items.slice(i, i + 100));
+  const addBatch = async (items) => {
+    // Envia em lotes de 100 para não estourar limite de body (6MB) do Netlify
+    const BATCH = 100;
+    for (let i = 0; i < items.length; i += BATCH) {
+      await qApi.save(items.slice(i, i + BATCH));
+    }
     reload();
   };
-  const updateItem = async (item) => { await qApi.update(item); reload(); };
-  const removeItem = async (id)   => { await qApi.remove(id); setQueue((p) => p.filter((x) => x.id !== id)); };
-  const clearQueue = async ()     => { await qApi.clear(); setQueue([]); };
+  const updateItem = async (item)  => { await qApi.update(item); reload(); };
+  const removeItem = async (id)    => { await qApi.remove(id); setQueue((p) => p.filter((x) => x.id !== id)); };
+  const clearQueue = async ()      => { await qApi.clear(); setQueue([]); };
 
   return (
     <SchedulerContext.Provider value={{ queue, addBatch, updateItem, removeItem, clearQueue, reload }}>
@@ -313,14 +329,15 @@ function SchedulerProvider({ addEntry, children }) {
   );
 }
 
-// ─── AppShell ─────────────────────────────────────────────────────────────────
+// ─── AppShell — usa os contextos (precisa estar dentro dos providers) ─────────
 function AppShell() {
   const { addAccounts, accounts, reloadAccounts, syncing, loading: accountsLoading } = useAccounts();
-  const { toast, showToast } = useToast();
-  const { swStatus }         = useServiceWorker();
-  const { oauthUrl }         = useOAuthUrl();
+  const { toast, showToast }   = useToast();
+  const { swStatus }           = useServiceWorker();
+  const { oauthUrl }           = useOAuthUrl();
 
-  const { status: oauthStatus, openPopup, reset: resetOauth } = useOAuthPopup({
+  // OAuth via popup — abre janela do Instagram, fecha sozinha, salva contas automaticamente
+  const { status: oauthStatus, errorMsg: oauthError, openPopup, reset: resetOauth } = useOAuthPopup({
     onAccounts: async (accs) => {
       try {
         showToast("success", `✅ ${accs.length} conta(s) conectada(s)! Salvando...`);
@@ -338,17 +355,18 @@ function AppShell() {
       }
     },
   });
-
-  const location     = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const location = useLocation();
   const { addEntry } = useHistory();
 
-  useEffect(() => {}, [location.pathname]);
+  useEffect(() => { setMobileMenuOpen(false); }, [location.pathname]);
 
   useTokenCheck({
     accounts,
     onExpired: useCallback((expired) => {
       reloadAccounts();
-      showToast("error", `Token expirado para: ${expired.map((a) => `@${a.username}`).join(", ")}. Reconecte em Contas.`);
+      const nomes = expired.map((a) => `@${a.username}`).join(", ");
+      showToast("error", `Token expirado para: ${nomes}. Reconecte em Contas.`);
     }, [showToast, reloadAccounts]),
   });
 
@@ -370,15 +388,12 @@ function AppShell() {
       })();
     }
     if (error) showToast("error", decodeURIComponent(error));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <SchedulerProvider addEntry={addEntry}>
       <div style={{ display: "flex", minHeight: "100vh" }}>
-        <aside
-          style={{ width: 230, background: "var(--bg2)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh" }}
-          className="sidebar-desktop"
-        >
+        <aside style={{ width: 230, background: "var(--bg2)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh" }} className="sidebar-desktop">
           <Sidebar accounts={accounts} swStatus={swStatus} oauthUrl={oauthUrl} syncing={syncing} loading={accountsLoading} onConnectInstagram={openPopup} oauthStatus={oauthStatus} />
         </aside>
 
@@ -393,8 +408,8 @@ function AppShell() {
             disabled={oauthStatus === "waiting" || oauthStatus === "saving"}
             style={{ fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 8, background: "linear-gradient(135deg, var(--accent), #9b4dfc)", color: "#fff", border: "none", cursor: oauthStatus === "waiting" ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6, opacity: oauthStatus === "waiting" || oauthStatus === "saving" ? 0.7 : 1 }}
           >
-            {oauthStatus === "waiting" ? <><span className="spinner" style={{ width: 11, height: 11, borderTopColor: "#fff" }} />Aguardando...</>
-            : oauthStatus === "saving"  ? <><span className="spinner" style={{ width: 11, height: 11, borderTopColor: "#fff" }} />Salvando...</>
+            {oauthStatus === "waiting" ? <><span className="spinner" style={{ width: 11, height: 11, borderTopColor: "#fff" }} /> Aguardando...</>
+            : oauthStatus === "saving"  ? <><span className="spinner" style={{ width: 11, height: 11, borderTopColor: "#fff" }} /> Salvando...</>
             : "+ Conta"}
           </button>
         </div>
@@ -403,11 +418,13 @@ function AppShell() {
 
         <main style={{ flex: 1, overflow: "auto", minWidth: 0, background: "var(--bg)" }}>
           <Toast toast={toast} />
+
           {swStatus === "unsupported" && (
             <div style={{ margin: "16px 32px 0", padding: "10px 16px", borderRadius: 10, fontSize: 12, background: "rgba(245,158,11,0.1)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.25)" }}>
-              ⚠️ Service Worker não suportado neste navegador.
+              ⚠️ Navegador não suporta Service Worker. O scheduler roda via React enquanto o site estiver aberto.
             </div>
           )}
+
           <Routes>
             <Route path="/"            element={<Accounts />} />
             <Route path="/fila"        element={<Queue />} />
@@ -436,6 +453,7 @@ function AppShell() {
   );
 }
 
+// ─── App — fornece os providers e renderiza AppShell ─────────────────────────
 export default function App() {
   return (
     <HistoryProvider>
