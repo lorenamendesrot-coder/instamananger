@@ -227,6 +227,7 @@ export default function Accounts() {
   const oauthUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${APP_ID}&redirect_uri=${REDIRECT}&scope=${SCOPE}&response_type=code&state=popup`;
 
   const { status: oauthStatus, errorMsg: oauthError, openPopup, reset: resetOauth } = useOAuthPopup({
+    flow: "facebook",
     onAccounts: async (accs) => {
       try {
         await addAccounts(accs);
@@ -235,6 +236,20 @@ export default function Accounts() {
       } catch (err) {
         alert("Erro ao salvar contas: " + err.message);
         resetOauth();
+      }
+    },
+  });
+
+  const { status: igStatus, errorMsg: igError, openPopup: openIgPopup, reset: resetIg } = useOAuthPopup({
+    flow: "instagram",
+    onAccounts: async (accs) => {
+      try {
+        await addAccounts(accs);
+        await reloadAccounts();
+        resetIg();
+      } catch (err) {
+        alert("Erro ao salvar contas: " + err.message);
+        resetIg();
       }
     },
   });
@@ -412,14 +427,28 @@ export default function Accounts() {
           <button
               onClick={openPopup}
               disabled={oauthStatus === "waiting" || oauthStatus === "saving"}
-              className="btn btn-primary"
+              className="btn btn-ghost btn-sm"
               style={{ display: "flex", alignItems: "center", gap: 6 }}
+              title="Conectar via Facebook OAuth (recomendado)"
             >
               {oauthStatus === "waiting"
                 ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Aguardando...</>
                 : oauthStatus === "saving"
                   ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Salvando...</>
-                  : "📷 + Conta"}
+                  : "📘 + Conta via Facebook"}
+            </button>
+          <button
+              onClick={openIgPopup}
+              disabled={igStatus === "waiting" || igStatus === "saving"}
+              className="btn btn-primary btn-sm"
+              style={{ display: "flex", alignItems: "center", gap: 6 }}
+              title="Conectar via Instagram OAuth direto"
+            >
+              {igStatus === "waiting"
+                ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Aguardando...</>
+                : igStatus === "saving"
+                  ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Salvando...</>
+                  : "📷 + Conta via Instagram"}
             </button>
         </div>
       </div>
@@ -466,6 +495,14 @@ export default function Accounts() {
       )}
 
       {/* ── Modais ─────────────────────────────────────────────────────────── */}
+      {igError && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 10, marginBottom: 14, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", fontSize: 13, color: "var(--danger)" }}>
+          ⚠️ {igError}
+          <button onClick={resetIg} style={{ marginLeft: 10, background: "none", color: "inherit", fontSize: 12, textDecoration: "underline", padding: 0, cursor: "pointer" }}>
+            Fechar
+          </button>
+        </div>
+      )}
       {oauthError && (
         <div style={{
           position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)",
@@ -516,14 +553,28 @@ export default function Accounts() {
             <button
                 onClick={openPopup}
                 disabled={oauthStatus === "waiting" || oauthStatus === "saving"}
-                className="btn btn-primary"
+                className="btn btn-ghost"
                 style={{ display: "flex", alignItems: "center", gap: 6 }}
+                title="Conectar via Facebook OAuth (recomendado)"
               >
                 {oauthStatus === "waiting"
                   ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Aguardando login...</>
                   : oauthStatus === "saving"
                     ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Salvando...</>
-                    : "📷 Conectar Instagram"}
+                    : "📘 Conectar via Facebook"}
+              </button>
+            <button
+                onClick={openIgPopup}
+                disabled={igStatus === "waiting" || igStatus === "saving"}
+                className="btn btn-primary"
+                style={{ display: "flex", alignItems: "center", gap: 6 }}
+                title="Conectar via Instagram OAuth direto"
+              >
+                {igStatus === "waiting"
+                  ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Aguardando login...</>
+                  : igStatus === "saving"
+                    ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Salvando...</>
+                    : "📷 Conectar via Instagram"}
               </button>
             <button className="btn btn-ghost" onClick={() => setShowTokenModal(true)}>🔐 Adicionar via Token</button>
             <button className="btn btn-ghost" onClick={() => setShowPageIdModal(true)}>🔑 Adicionar via Page ID</button>
