@@ -1,5 +1,5 @@
 // Queue.jsx — Fila de agendamentos com filtros de status + data
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useScheduler } from "../App.jsx";
 import Modal from "../Modal.jsx";
 
@@ -96,9 +96,11 @@ export default function Queue() {
   const [filterDay,    setFilterDay]    = useState("all");
   const [sortBy,       setSortBy]       = useState("time_asc");
   const [search,       setSearch]       = useState("");
-  const [showSortMenu, setShowSortMenu] = useState(false);
-  const [selected,     setSelected]     = useState(new Set()); // IDs selecionados
-  const [selecting,    setSelecting]    = useState(false);     // modo seleção ativo
+  const [showSortMenu,   setShowSortMenu]   = useState(false);
+  const [selected,       setSelected]       = useState(new Set()); // IDs selecionados
+  const [selecting,      setSelecting]      = useState(false);     // modo seleção ativo
+  const [forcingId,      setForcingId]      = useState(null);      // id do item sendo forçado
+  const [forceConfirm,   setForceConfirm]   = useState(null);      // item aguardando confirmação
 
   // Separar itens normais dos video_finish (tarefas internas do SW)
   const mainQueue   = useMemo(() => queue.filter((q) => !q.type), [queue]);
@@ -170,6 +172,19 @@ export default function Queue() {
     setSelecting(false);
     setConfirmModal(null);
   };
+
+  // ─── Forçar publicação imediata ──────────────────────────────────────────
+  const forcePublish = useCallback(async (item) => {
+    setForcingId(item.id);
+    try {
+      // Redefine scheduledAt para agora (passado) — o scheduler pega na próxima tick
+      await updateItem({ ...item, scheduledAt: Date.now() - 1000, status: "pending" });
+      reloadQueue?.();
+    } finally {
+      setForcingId(null);
+      setForceConfirm(null);
+    }
+  }, [updateItem, reloadQueue]);
 
   // Auto-reload enquanto há video_finish pendentes
   const hasPendingVF = videoFinish.some((v) => v.status === "pending" || v.status === "running");
@@ -368,6 +383,8 @@ export default function Queue() {
           vfByParent={vfByParent}
           onEdit={openEdit}
           onRemove={(id) => setConfirmModal({ type: "removeItem", id })}
+          onForce={(item) => setForceConfirm(item)}
+          forcingId={forcingId}
           selecting={selecting}
           selected={selected}
           onToggleSelect={toggleSelect}
@@ -395,6 +412,38 @@ export default function Queue() {
         </div>
       )}
 
+      {/* Modal confirmação publicação forçada */}
+      {forceConfirm && (
+        <div onClick={() => setForceConfirm(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2)", border: "1px solid var(--border2)", borderRadius: 16, padding: 28, width: "100%", maxWidth: 420, boxShadow: "0 24px 80px rgba(0,0,0,0.5)" }}>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 10 }}>⚡ Publicar agora?</div>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 18, lineHeight: 1.6 }}>
+              O agendamento será publicado <strong style={{ color: "var(--text)" }}>imediatamente</strong>, ignorando o horário programado.
+              {forceConfirm.accounts?.length > 0 && (
+                <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {forceConfirm.accounts.map((a) => (
+                    <span key={a.id} style={{ fontSize: 11, background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 20, padding: "2px 8px" }}>
+                      @{a.username}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setForceConfirm(null)}>Cancelar</button>
+              <button
+                className="btn btn-primary btn-sm"
+                style={{ background: "var(--warning)", borderColor: "var(--warning)" }}
+                onClick={() => forcePublish(forceConfirm)}
+                disabled={forcingId === forceConfirm?.id}
+              >
+                {forcingId === forceConfirm?.id ? "Publicando…" : "⚡ Publicar agora"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Modal open={confirmModal?.type === "clearQueue"} title="Limpar fila?" message="Todos os agendamentos serão removidos permanentemente." confirmLabel="Limpar tudo" confirmDanger
         onConfirm={() => { clearQueue(); setConfirmModal(null); }} onCancel={() => setConfirmModal(null)} />
       <Modal open={confirmModal?.type === "removeItem"} title="Remover agendamento?" message="Este item será removido da fila." confirmLabel="Remover" confirmDanger
@@ -406,7 +455,7 @@ export default function Queue() {
 }
 
 // ─── QueueList — lista com separadores de dia ────────────────────────────────
-function QueueList({ items, filterDay, vfByParent, onEdit, onRemove, selecting, selected, onToggleSelect }) {
+function QueueList({ items, filterDay, vfByParent, onEdit, onRemove, onForce, forcingId, selecting, selected, onToggleSelect }) {
   // Quando "Todos os dias" está ativo, agrupa por dia com separador
   const groups = useMemo(() => {
     if (filterDay !== "all") return [{ label: null, items }];
@@ -452,6 +501,8 @@ function QueueList({ items, filterDay, vfByParent, onEdit, onRemove, selecting, 
               vfItems={vfByParent[item.id]}
               onEdit={onEdit}
               onRemove={onRemove}
+              onForce={onForce}
+              forcingId={forcingId}
               selecting={selecting}
               isSelected={selected?.has(item.id)}
               onToggleSelect={onToggleSelect}
@@ -464,7 +515,7 @@ function QueueList({ items, filterDay, vfByParent, onEdit, onRemove, selecting, 
 }
 
 // ─── QueueItem — card individual ─────────────────────────────────────────────
-function QueueItem({ item, vfItems, onEdit, onRemove, selecting, isSelected, onToggleSelect }) {
+function QueueItem({ item, vfItems, onEdit, onRemove, onForce, forcingId, selecting, isSelected, onToggleSelect }) {
   const info          = STATUS_INFO[item.status] || STATUS_INFO.pending;
   const scheduledDate = new Date(item.scheduledAt);
   const isPast        = item.scheduledAt < Date.now();
@@ -593,6 +644,17 @@ function QueueItem({ item, vfItems, onEdit, onRemove, selecting, isSelected, onT
 
         {/* Ações */}
         <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+          {(item.status === "pending" || item.status === "error") && (
+            <button
+              className="btn btn-ghost btn-xs"
+              onClick={() => onForce(item)}
+              title="Publicar agora"
+              disabled={forcingId === item.id}
+              style={{ padding: "4px 8px", fontSize: 12, color: "var(--warning)" }}
+            >
+              {forcingId === item.id ? "⟳" : "⚡"}
+            </button>
+          )}
           {(item.status === "pending" || item.status === "error") && (
             <button className="btn btn-ghost btn-xs" onClick={() => onEdit(item)} title="Editar" style={{ padding: "4px 8px", fontSize: 12 }}>✎</button>
           )}
