@@ -251,14 +251,26 @@ export const handler = async (event) => {
     const profileData = await gfetch(graphUrl);
 
     if (profileData.error) {
-      if (profileData.error.code === 190) {
+      // Códigos que indicam token inválido/expirado/sem permissão
+      const TOKEN_ERROR_CODES = [190, 102, 104, 10, 200, 2500];
+      const TOKEN_ERROR_MSGS  = ["token", "oauth", "session", "expired", "invalid", "permission", "cannot parse"];
+      const errCode    = profileData.error.code;
+      const errMsg     = (profileData.error.message || "").toLowerCase();
+      const errSubcode = profileData.error.error_subcode;
+
+      const isTokenError =
+        TOKEN_ERROR_CODES.includes(errCode) ||
+        errSubcode === 463 || errSubcode === 467 ||
+        TOKEN_ERROR_MSGS.some((k) => errMsg.includes(k));
+
+      if (isTokenError) {
         const health = analyzeAccountHealth({ tokenExpired: true });
         return {
           statusCode: 401,
           headers,
           body: JSON.stringify({
             error: "token_expired",
-            message: "Token expirado. Reconecte a conta.",
+            message: "Token inválido ou expirado. Reconecte a conta.",
             health,
           }),
         };
