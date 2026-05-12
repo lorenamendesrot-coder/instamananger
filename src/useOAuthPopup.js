@@ -80,7 +80,7 @@ export function useOAuthPopup({ onAccounts, onError, flow = "instagram" }) {
     // Para Facebook, usa VITE_META_APP_ID (Facebook App ID)
     const appId = flow === "instagram"
       ? (import.meta.env.VITE_META_IG_APP_ID || import.meta.env.VITE_META_APP_ID)
-      : import.meta.env.VITE_META_APP_ID;
+      : (import.meta.env.VITE_META_FB_APP_ID || import.meta.env.VITE_META_APP_ID);
 
     const url   = buildOAuthUrl(flow, appId);
 
