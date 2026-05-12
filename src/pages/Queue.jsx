@@ -541,26 +541,27 @@ function QueueItem({ item, vfItems, onEdit, onRemove, selecting, isSelected, onT
             </span>
           </div>
 
-          {/* Avatars */}
-          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <div style={{ display: "flex" }}>
-              {(item.accounts || []).slice(0, 6).map((a, i) => (
-                <div key={a.id} title={`@${a.username}`} style={{ marginLeft: i > 0 ? -6 : 0, zIndex: 6 - i, position: "relative" }}>
-                  {a.profile_picture
-                    ? <img src={a.profile_picture} alt="" style={{ width: 18, height: 18, borderRadius: "50%", objectFit: "cover", border: "1.5px solid var(--bg2)" }} />
-                    : <div style={{ width: 18, height: 18, borderRadius: "50%", background: "linear-gradient(135deg, var(--accent), #9b4dfc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, color: "#fff", fontWeight: 700, border: "1.5px solid var(--bg2)" }}>
-                        {(a.username || "?")[0].toUpperCase()}
-                      </div>}
-                </div>
-              ))}
-              {(item.accounts || []).length > 6 && (
-                <span style={{ fontSize: 9, color: "var(--muted)", marginLeft: 4, alignSelf: "center" }}>
-                  +{item.accounts.length - 6}
+          {/* Contas */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
+            {(item.accounts || []).slice(0, 8).map((a, i) => (
+              <div key={a.id || i} style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 20, padding: "2px 7px 2px 3px" }}>
+                {a.profile_picture
+                  ? <img src={a.profile_picture} alt="" style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+                  : <div style={{ width: 16, height: 16, borderRadius: "50%", background: "linear-gradient(135deg, var(--accent), #9b4dfc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, color: "#fff", fontWeight: 700, flexShrink: 0 }}>
+                      {(a.username || "?")[0].toUpperCase()}
+                    </div>}
+                <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap" }}>
+                  @{a.username || "—"}
                 </span>
-              )}
-            </div>
-            <span style={{ fontSize: 10, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-              {mediaCount > 1 ? `${mediaCount} mídias` : item.mediaUrl?.split("/").pop()?.slice(0, 40)}
+              </div>
+            ))}
+            {(item.accounts || []).length > 8 && (
+              <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 600 }}>
+                +{item.accounts.length - 8} conta(s)
+              </span>
+            )}
+            <span style={{ fontSize: 10, color: "var(--muted)", marginLeft: "auto", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>
+              {mediaCount > 1 ? `${mediaCount} mídias` : item.mediaUrl?.split("/").pop()?.slice(0, 35)}
             </span>
           </div>
 
