@@ -239,16 +239,20 @@ export const handler = async (event) => {
     // - Facebook Login (EAA): usa graph.facebook.com/v21.0/{id}
     const igToken = isIGToken(access_token);
 
+    // Campos seguros — biography/website podem não existir em contas Business via FB Graph
     const profileFields = igToken
-      ? ["id", "username", "name", "biography", "website",
-         "profile_picture_url", "followers_count", "media_count"].join(",")
-      : ["id", "username", "name", "biography", "website",
-         "profile_picture_url", "followers_count", "follows_count", "media_count"].join(",");
+      ? ["id", "username", "name", "profile_picture_url", "followers_count", "media_count"].join(",")
+      : ["id", "username", "name", "profile_picture_url", "followers_count", "follows_count", "media_count"].join(",");
 
     const graphUrl = igToken
       ? `${GRAPH_IG}/me?fields=${profileFields}&access_token=${access_token}`
       : `${GRAPH_FB}/${instagram_id}?fields=${profileFields}&access_token=${access_token}`;
+
+    console.log(`[account-insights] fetching ${igToken ? "IG" : "FB"} profile for ${instagram_id}`);
     const profileData = await gfetch(graphUrl);
+    if (profileData.error) {
+      console.error("[account-insights] profileData.error:", JSON.stringify(profileData.error));
+    }
 
     if (profileData.error) {
       // Códigos que indicam token inválido/expirado/sem permissão
