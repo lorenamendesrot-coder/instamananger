@@ -275,7 +275,20 @@ export const handler = async (event) => {
           }),
         };
       }
-      return { statusCode: 400, headers, body: JSON.stringify({ error: profileData.error.message }) };
+
+      // Qualquer outro erro da API — loga para diagnóstico e retorna 401
+      // (melhor marcar como expirado do que deixar como 400 genérico)
+      console.error("[account-insights] erro de perfil não mapeado:", JSON.stringify(profileData.error));
+      const health = analyzeAccountHealth({ tokenExpired: true });
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({
+          error: "token_expired",
+          message: `Erro ao acessar conta: ${profileData.error.message} (code: ${errCode})`,
+          health,
+        }),
+      };
     }
 
     // Para tokens IG, o ID real vem do /me — usa ele nas chamadas seguintes
