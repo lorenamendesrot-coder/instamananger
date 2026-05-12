@@ -241,7 +241,7 @@ export const handler = async (event) => {
 
     const profileFields = igToken
       ? ["id", "username", "name", "biography", "website",
-         "profile_picture_url", "followers_count", "following_count", "media_count"].join(",")
+         "profile_picture_url", "followers_count", "media_count"].join(",")
       : ["id", "username", "name", "biography", "website",
          "profile_picture_url", "followers_count", "follows_count", "media_count"].join(",");
 
