@@ -1,7 +1,7 @@
 // publish.mjs
 const GRAPH_FB       = "https://graph.facebook.com/v21.0";
 const GRAPH_IG       = "https://graph.instagram.com";
-function isIGToken(t) { return t?.startsWith('IGAA'); }
+function isIGToken(t) { return t?.startsWith("IGAA"); }
 function graph(t)    { return isIGToken(t) ? GRAPH_IG : GRAPH_FB; }
 const sleep          = (ms) => new Promise((r) => setTimeout(r, ms));
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
@@ -36,7 +36,6 @@ function fmtWait(ms) {
 
 function canPublish(id) {
   const s = getState(id), now = Date.now(), h = new Date(now).getUTCHours();
-
   if (h < W_START || h >= W_END) {
     const n = new Date(now);
     if (h >= W_END) n.setUTCDate(n.getUTCDate() + 1);
@@ -71,20 +70,36 @@ function recordPost(id, ok) {
 }
 
 // ─── Polling do container de vídeo ───────────────────────────────────────────
+// FIX 1: Apenas 2 polls de 3s dentro do publish (total ~7s).
+//         Vídeos que ainda não terminaram retornam pending=true
+//         e o publish-finish.mjs assume o trabalho sem estourar o timeout de 26s.
+// FIX 3: Loga e retorna o erro REAL do Instagram em vez de engolir com catch(_){}
 async function waitForContainer(id, token) {
-  for (let i = 0; i < 5; i++) {
-    await sleep(4000);
+  for (let i = 0; i < 2; i++) {
+    await sleep(3000);
     try {
-      const r = await fetch(`${graph(token)}/${id}?fields=status_code&access_token=${token}`);
+      const r = await fetch(`${graph(token)}/${id}?fields=status_code,status&access_token=${token}`);
       const d = await r.json();
+      // Retorna o erro real da API, não uma mensagem genérica
+      if (d.error)                      return { ready: false, error: `API error: ${d.error.message} (code ${d.error.code})` };
       if (d.status_code === "FINISHED") return { ready: true };
-      if (d.status_code === "ERROR")    return { ready: false, error: "Instagram: erro no processamento do vídeo" };
-    } catch (_) {}
+      if (d.status_code === "ERROR")    return { ready: false, error: `Instagram rejeitou o vídeo (status: ${d.status || "ERROR"})` };
+      console.log(`[publish] container ${id} status: ${d.status_code} (poll ${i + 1}/2)`);
+    } catch (e) {
+      console.warn(`[publish] erro ao checar container ${id}:`, e.message);
+    }
   }
+  // Não terminou em 6s — passa para o publish-finish processar de forma assíncrona
   return { ready: false, pending: true, creation_id: id };
 }
 
 // ─── Publicação por conta ─────────────────────────────────────────────────────
+// FIX 2: Mapeamento correto de tipos para a Meta Graph API atual:
+//   REEL  → media_type: "REELS",  video_url
+//   FEED  → media_type: "REELS",  video_url  (vídeo no feed usa endpoint de Reels)
+//   STORY → media_type: "REELS",  video_url, share_to_feed:false  (vídeo em story)
+//   STORY → image_url  (imagem em story — sem media_type)
+//   FEED  → image_url  (imagem no feed — sem media_type)
 async function publishOne({ account, media_url, media_type, post_type, caption }) {
   const token = account.access_token;
   if (!token) return { success: false, error: "Token não encontrado. Reconecte a conta." };
@@ -95,41 +110,70 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
   if (post_type === "REEL") {
     if (!isVideo) return { success: false, error: "Reels só aceita vídeo." };
     payload = { ...payload, video_url: media_url, media_type: "REELS", caption, share_to_feed: true };
+
   } else if (post_type === "FEED") {
     payload = isVideo
       ? { ...payload, video_url: media_url, media_type: "REELS", caption }
       : { ...payload, image_url: media_url, caption };
+
   } else if (post_type === "STORY") {
+    // FIX 2: story de vídeo usa media_type:"REELS" com share_to_feed:false
+    // O media_type:"VIDEO" foi depreciado pela Meta e causa erro de processamento
     payload = isVideo
-      ? { ...payload, video_url: media_url, media_type: "VIDEO" }
-      : { ...payload, image_url: media_url };
+      ? { ...payload, video_url: media_url, media_type: "REELS", share_to_feed: false }
+      : { ...payload, image_url: media_url, media_type: "STORIES" };
+
+  } else {
+    return { success: false, error: `post_type desconhecido: ${post_type}` };
   }
 
   try {
+    console.log(`[publish] criando container para @${account.username} — ${post_type} ${isVideo ? "VIDEO" : "IMAGE"}`);
+
     const cRes  = await fetch(`${graph(token)}/${account.id}/media`, {
-      method: "POST",
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body:    JSON.stringify(payload),
     });
     const cData = await cRes.json();
-    if (cData.error) return { success: false, error: cData.error.message, errorCode: cData.error.code };
 
-    if (isVideo || post_type === "REEL") {
+    if (cData.error) {
+      console.error(`[publish] erro ao criar container @${account.username}:`, cData.error);
+      return { success: false, error: cData.error.message, errorCode: cData.error.code };
+    }
+
+    console.log(`[publish] container criado: ${cData.id} para @${account.username}`);
+
+    // Apenas vídeos precisam aguardar processamento
+    if (isVideo) {
       const result = await waitForContainer(cData.id, token);
-      if (result.pending) return { success: false, pending: true, creation_id: cData.id, error: "Vídeo processando. Será publicado automaticamente em breve." };
-      if (!result.ready)  return { success: false, error: result.error };
+      if (result.pending) {
+        console.log(`[publish] @${account.username} vídeo ainda processando — delega para publish-finish`);
+        return { success: false, pending: true, creation_id: cData.id, error: "Vídeo processando. Será publicado automaticamente em breve." };
+      }
+      if (!result.ready) {
+        console.error(`[publish] @${account.username} container falhou:`, result.error);
+        return { success: false, error: result.error };
+      }
     }
 
     const pRes  = await fetch(`${graph(token)}/${account.id}/media_publish`, {
-      method: "POST",
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ creation_id: cData.id, access_token: token }),
+      body:    JSON.stringify({ creation_id: cData.id, access_token: token }),
     });
     const pData = await pRes.json();
-    if (pData.error) return { success: false, error: pData.error.message, errorCode: pData.error.code };
 
+    if (pData.error) {
+      console.error(`[publish] erro ao publicar @${account.username}:`, pData.error);
+      return { success: false, error: pData.error.message, errorCode: pData.error.code };
+    }
+
+    console.log(`[publish] ✅ publicado @${account.username} media_id: ${pData.id}`);
     return { success: true, media_id: pData.id, published_at: new Date().toISOString() };
+
   } catch (err) {
+    console.error(`[publish] exceção @${account.username}:`, err.message);
     return { success: false, error: err.message };
   }
 }
@@ -156,6 +200,8 @@ export const handler = async (event) => {
 
   if (!accounts?.length || !media_url || !media_type || !post_type)
     return { statusCode: 400, headers, body: JSON.stringify({ error: "Campos obrigatórios ausentes" }) };
+
+  console.log(`[publish] iniciando — ${post_type} ${media_type} para ${accounts.length} conta(s)`);
 
   const delayMs = (parseInt(String(delay_seconds)) || 0) * 1000;
   const results = [];
