@@ -29,3 +29,6 @@
 
 [functions."publish-finish"]
   timeout = 26
+
+[functions."scheduler"]
+  timeout = 26
