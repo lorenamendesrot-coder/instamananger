@@ -131,6 +131,9 @@ async function runItem(item) {
         cycle_index:      mi,
         cycle_total:      urlsToPost.length,
       });
+      // Notifica a página imediatamente após salvar no histórico
+      // para que o History.jsx recarregue sem depender do evento final
+      notifyClients({ type: "QUEUE_UPDATE" });
 
       totalResults   = [...totalResults, ...finishedResults];
       totalSuccesses += finishedResults.filter((r) => r.success).length;
