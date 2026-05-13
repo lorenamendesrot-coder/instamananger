@@ -14,7 +14,7 @@ function getQueueStore() {
 
 const BLOB_KEY = "queue-data";
 
-// ─── Lock otimista (mesmo mecanismo do queue.mjs) ─────────────────────────────
+// ─── Lock otimista ────────────────────────────────────────────────────────────
 
 const MAX_RETRIES = 5;
 const BASE_DELAY  = 80;
@@ -22,12 +22,8 @@ const BASE_DELAY  = 80;
 async function readWithEtag(store) {
   try {
     const data = await store.get(BLOB_KEY, { type: "json" });
-    if (data && Array.isArray(data.items)) {
-      return { items: data.items, etag: data.etag || null };
-    }
-    if (Array.isArray(data)) {
-      return { items: data, etag: null };
-    }
+    if (data && Array.isArray(data.items)) return { items: data.items, etag: data.etag || null };
+    if (Array.isArray(data))              return { items: data, etag: null };
     return { items: [], etag: null };
   } catch {
     return { items: [], etag: null };
@@ -36,12 +32,9 @@ async function readWithEtag(store) {
 
 async function writeWithLock(store, etag, items) {
   const current = await readWithEtag(store);
-  if (etag !== null && current.etag !== etag) {
-    throw new Error("etag_mismatch");
-  }
+  if (etag !== null && current.etag !== etag) throw new Error("etag_mismatch");
   const newEtag = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   await store.setJSON(BLOB_KEY, { etag: newEtag, items });
-  return newEtag;
 }
 
 async function withLock(store, fn) {
@@ -54,14 +47,12 @@ async function withLock(store, fn) {
     } catch (err) {
       if (err.message !== "etag_mismatch") throw err;
       const delay = BASE_DELAY * Math.pow(2, attempt) + Math.random() * 30;
-      console.warn(`[scheduler] conflito de escrita, tentativa ${attempt + 1}/${MAX_RETRIES} (aguardando ${Math.round(delay)}ms)`);
+      console.warn(`[scheduler] conflito de escrita, tentativa ${attempt + 1}/${MAX_RETRIES} (${Math.round(delay)}ms)`);
       await new Promise((r) => setTimeout(r, delay));
     }
   }
   throw new Error("Não foi possível gravar na fila após múltiplas tentativas.");
 }
-
-// ─── Helpers de fila usando withLock ─────────────────────────────────────────
 
 async function queueReadAll(store) {
   const { items } = await readWithEtag(store);
@@ -86,34 +77,56 @@ async function queueSave(store, newItem) {
   });
 }
 
-// ─── Chama publish em batches até processar todas as contas ──────────────────
+// ─── Publish em batches resilientes ──────────────────────────────────────────
+// Cada batch é chamado individualmente.
+// Se um batch falhar, as contas dele são registradas como falha no resultado
+// e os demais batches continuam normalmente.
+
+const BATCH_SIZE     = parseInt(process.env.PUBLISH_BATCH_SIZE || "5");
+const RETRY_DELAY_MS = 10 * 60 * 1000; // 10 minutos
+
 async function callPublishAllBatches(item, mediaUrl) {
   const allResults = [];
   let offset = 0;
 
   while (offset < item.accounts.length) {
-    const res = await fetch(`${SITE_URL}/.netlify/functions/publish`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        accounts:        item.accounts,
-        media_url:       mediaUrl,
-        media_type:      item.mediaType,
-        post_type:       item.postType,
-        captions:        item.captions        || {},
-        default_caption: item.caption         || "",
-        skip_rate_limit: !!item.warmup,
-        batch_offset:    offset,
-      }),
-    });
+    try {
+      const res = await fetch(`${SITE_URL}/.netlify/functions/publish`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accounts:        item.accounts,
+          media_url:       mediaUrl,
+          media_type:      item.mediaType,
+          post_type:       item.postType,
+          captions:        item.captions        || {},
+          default_caption: item.caption         || "",
+          skip_rate_limit: !!item.warmup,
+          batch_offset:    offset,
+        }),
+      });
 
-    if (!res.ok) throw new Error(`publish HTTP ${res.status} (offset ${offset})`);
-    const data = await res.json();
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      allResults.push(...(data.results || []));
 
-    allResults.push(...(data.results || []));
-
-    if (!data.has_more) break;
-    offset = data.next_offset;
+      if (!data.has_more) break;
+      offset = data.next_offset;
+    } catch (err) {
+      // Batch falhou — registra cada conta desse batch e continua para o próximo
+      console.warn(`[scheduler] batch offset=${offset} falhou: ${err.message}`);
+      const batchAccounts = item.accounts.slice(offset, offset + BATCH_SIZE);
+      for (const acc of batchAccounts) {
+        allResults.push({
+          account_id:  acc.id,
+          username:    acc.username,
+          success:     false,
+          error:       err.message,
+          batch_error: true,
+        });
+      }
+      offset += BATCH_SIZE;
+    }
   }
 
   return { results: allResults };
@@ -183,25 +196,16 @@ async function processItem(store, item) {
       const mediaUrl = urlsToPost[mi];
       if (mi > 0) await new Promise((r) => setTimeout(r, 3000));
 
-      let data, lastErr;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        if (attempt > 0) await new Promise((r) => setTimeout(r, 5000 * Math.pow(3, attempt - 1)));
-        try {
-          data = await callPublishAllBatches(item, mediaUrl);
-          break;
-        } catch (err) {
-          lastErr = err;
-          console.warn(`[scheduler] tentativa ${attempt + 1} falhou: ${err.message}`);
-        }
-      }
+      const { results } = await callPublishAllBatches(item, mediaUrl);
 
-      if (!data) throw lastErr || new Error("Falha ao publicar após 3 tentativas");
+      // ── Separa os resultados ──────────────────────────────────────────────
+      const succeeded     = results.filter((r) => r.success);
+      const pendingVideos = results.filter((r) => r.pending && r.creation_id);
+      const failed        = results.filter((r) => !r.success && !r.pending);
 
-      const results        = data.results || [];
-      const pendingResults = results.filter((r) => r.pending && r.creation_id);
-      const historyId      = `h-${Date.now()}-${mi}`;
-
-      for (const pr of pendingResults) {
+      // ── Cria itens video_finish para Reels que ainda estão processando ────
+      const historyId = `h-${Date.now()}-${mi}`;
+      for (const pr of pendingVideos) {
         await queueSave(store, {
           id:          `vf-${historyId}-${pr.account_id}`,
           type:        "video_finish",
@@ -222,11 +226,51 @@ async function processItem(store, item) {
         });
       }
 
-      const ok  = results.filter((r) => r.success).length;
-      const err = results.filter((r) => !r.success && !r.pending).length;
-      console.log(`[scheduler] item ${item.id} — ${ok} ok, ${pendingResults.length} vídeos pendentes, ${err} erros`);
+      // ── Reagenda contas que falharam (1 chance de retry por item) ─────────
+      // Contas com rate_limited não entram aqui — o rate limit cuida delas.
+      const failedNonRL = failed.filter((r) => !r.rate_limited);
+      if (failedNonRL.length > 0) {
+        const alreadyFailed = new Set(item.failedAccountIds || []);
+        const toRetry = [];
+        const giveUp  = [];
+
+        for (const r of failedNonRL) {
+          if (alreadyFailed.has(r.account_id)) {
+            giveUp.push(r);
+            console.error(`[scheduler] ❌ @${r.username} falhou 2x no item ${item.id} — desistindo: ${r.error}`);
+          } else {
+            toRetry.push(r);
+          }
+        }
+
+        if (toRetry.length > 0) {
+          const retryAccounts = item.accounts.filter((a) =>
+            toRetry.some((r) => r.account_id === a.id)
+          );
+          await queueSave(store, {
+            ...item,
+            id:               `retry-${item.id}-${Date.now()}`,
+            status:           "pending",
+            accounts:         retryAccounts,
+            scheduledAt:      Date.now() + RETRY_DELAY_MS,
+            failedAccountIds: [...alreadyFailed, ...toRetry.map((r) => r.account_id)],
+            retryOf:          item.id,
+            createdAt:        new Date().toISOString(),
+            loop:             false, // retry não herda loop
+          });
+          console.log(`[scheduler] ↻ ${toRetry.length} conta(s) reagendadas em 10min`);
+        }
+      }
+
+      console.log(
+        `[scheduler] item ${item.id} — ` +
+        `${succeeded.length} ok, ${pendingVideos.length} vídeos pendentes, ` +
+        `${failedNonRL.filter((r) => !r.batch_error).length} erros de API, ` +
+        `${failedNonRL.filter((r) => r.batch_error).length} erros de batch`
+      );
     }
 
+    // ── Finaliza item original ────────────────────────────────────────────
     if (item.loop) {
       await queueUpdate(store, {
         ...item,
@@ -237,6 +281,7 @@ async function processItem(store, item) {
     } else {
       await queueUpdate(store, { ...item, status: "done", finishedAt: new Date().toISOString() });
     }
+
   } catch (err) {
     console.error(`[scheduler] ❌ item ${item.id}: ${err.message}`);
     await queueUpdate(store, {
