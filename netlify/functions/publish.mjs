@@ -20,9 +20,9 @@ function getRLStore() {
 const MAX_DAY  = parseInt(process.env.MAX_POSTS_PER_DAY  || "50");
 const MAX_HOUR = parseInt(process.env.MAX_POSTS_PER_HOUR || "1");
 const MIN_GAP  = parseInt(process.env.MIN_GAP_MINUTES    || "10");
-// W_START e W_END em hora LOCAL (ex: 9 = 9h de Brasília)
-const W_START  = parseInt(process.env.POST_WINDOW_START  || "9");
-const W_END    = parseInt(process.env.POST_WINDOW_END    || "23");
+// W_START e W_END em hora LOCAL — default 0h-24h (sem restricao de janela).
+const W_START  = parseInt(process.env.POST_WINDOW_START  || "0");
+const W_END    = parseInt(process.env.POST_WINDOW_END    || "24");
 // Offset do fuso em horas. Brasil/BRT = -3. Ajuste via env var se necessário.
 const TZ_OFFSET = parseInt(process.env.TZ_OFFSET_HOURS   || "-3");
 
