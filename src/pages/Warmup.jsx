@@ -33,17 +33,20 @@ export default function Warmup() {
   const [bulkCaptions, setBulkCaptions] = useState("");
   const [captionMode,  setCaptionMode]  = useState("roundrobin");
   const [startDate,    setStartDate]    = useState(() => {
-    // Se já passou das 21:00, começa amanhã para não gerar fila vazia hoje
+    // Usa data LOCAL (não UTC) para não avançar o dia em fusos negativos (Brasil UTC-3)
     const now = new Date();
-    if (now.getHours() >= 21) {
-      now.setDate(now.getDate() + 1);
+    const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    // Se já passou das 22h locais, começa amanhã para não gerar fila muito curta
+    if (now.getHours() >= 22) {
+      localDate.setDate(localDate.getDate() + 1);
     }
-    return now.toISOString().slice(0, 10);
+    return localDate.toISOString().slice(0, 10);
   });
   const [distribution, setDistribution] = useState("roundrobin");
   const [useNewOnly,   setUseNewOnly]   = useState(true);
   const [selectedAccIds, setSelectedAccIds] = useState(null); // null = todas selecionadas
   const [urlInputs,    setUrlInputs]    = useState({ reels: "", feed: "", stories: "" });
+  const [thumbUrl,     setThumbUrl]     = useState(""); // capa para Reels
   const [dayConfig, setDayConfig] = useState(WARMUP_PRESET_2D.days);
   const [configMode,   setConfigMode]   = useState("preset"); // "preset" | "target"
   // Estado do modo target
@@ -223,6 +226,7 @@ export default function Warmup() {
         preset: { ...WARMUP_PRESET_2D, days: syntheticDays },
         startDateStr: startDate, distribution,
         loopEnabled: false, loopDays: 0,
+        thumbUrl,
       });
     } else {
       // Modo preset (por dia)
@@ -234,6 +238,7 @@ export default function Warmup() {
         preset: { ...WARMUP_PRESET_2D, days: activeDays },
         startDateStr: startDate, distribution,
         loopEnabled, loopDays,
+        thumbUrl,
       });
     }
 
@@ -386,6 +391,34 @@ export default function Warmup() {
               </div>
             ))}
           </div>
+
+          {/* Capa para Reels */}
+          {reelFiles.length > 0 && (
+            <div className="card" style={{ marginBottom: 12, padding: "14px 16px" }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>🖼 Capa do Reel (opcional)</div>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>
+                URL de uma imagem JPG/PNG que será usada como thumbnail do Reel. Se não definida, o Instagram usa o primeiro frame.
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  type="url"
+                  value={thumbUrl}
+                  onChange={(e) => setThumbUrl(e.target.value)}
+                  placeholder="https://exemplo.com/capa.jpg"
+                  style={{ flex: 1, fontSize: 12, fontFamily: "monospace" }}
+                />
+                {thumbUrl && (
+                  <button className="btn btn-ghost btn-sm" onClick={() => setThumbUrl("")}>✕</button>
+                )}
+              </div>
+              {thumbUrl && (
+                <div style={{ marginTop: 8, borderRadius: 8, overflow: "hidden", maxWidth: 120 }}>
+                  <img src={thumbUrl} alt="capa" style={{ width: "100%", display: "block", borderRadius: 8 }}
+                    onError={(e) => { e.target.style.display = "none"; }} />
+                </div>
+              )}
+            </div>
+          )}
 
           {reelFiles.length > 0 && <ReelChecklist reels={reelFiles} sanitizedIds={[]} onRemove={(id) => removeFile("reels", id)} />}
 
@@ -687,7 +720,7 @@ export default function Warmup() {
                 <input
                   type="date"
                   value={startDate}
-                  min={new Date().toISOString().slice(0, 10)}
+                  min={(() => { const n = new Date(); return new Date(n.getTime() - n.getTimezoneOffset() * 60000).toISOString().slice(0, 10); })()}
                   onChange={(e) => setStartDate(e.target.value)}
                 />
               </div>
