@@ -1,6 +1,7 @@
 // netlify/functions/queue.mjs
 // Salva TODA a fila num único blob "queue-data"
 // Suporta 800+ itens sem timeout — 1 write em vez de 800 writes paralelos
+// Lock otimista via etag — evita race condition entre scheduler e frontend
 //
 // GET    /api/queue        → retorna array de itens
 // POST   /api/queue        → addBatch: adiciona/substitui itens pelo id
@@ -11,7 +12,7 @@
 import { getStore } from "@netlify/blobs";
 
 const STORE_NAME = "insta-queue";
-const BLOB_KEY   = "queue-data"; // tudo num único blob
+const BLOB_KEY   = "queue-data";
 
 function getQueueStore() {
   const siteID = process.env.NETLIFY_SITE_ID;
@@ -37,18 +38,62 @@ function json(data, status = 200, req = null) {
   return new Response(JSON.stringify(data), { status, headers: corsHeaders(req) });
 }
 
-async function readAll(store) {
+// ─── Lock otimista ────────────────────────────────────────────────────────────
+// O blob guarda { etag, items } em vez de só o array.
+// etag é um timestamp gerado a cada escrita.
+// Se ao gravar o etag lido for diferente do atual, outra instância
+// escreveu antes — tenta de novo com backoff (até MAX_RETRIES vezes).
+
+const MAX_RETRIES = 5;
+const BASE_DELAY  = 80; // ms
+
+async function readWithEtag(store) {
   try {
     const data = await store.get(BLOB_KEY, { type: "json" });
-    return Array.isArray(data) ? data : [];
+    if (data && Array.isArray(data.items)) {
+      return { items: data.items, etag: data.etag || null };
+    }
+    // Compatibilidade: blob antigo era só o array
+    if (Array.isArray(data)) {
+      return { items: data, etag: null };
+    }
+    return { items: [], etag: null };
   } catch {
-    return [];
+    return { items: [], etag: null };
   }
 }
 
-async function writeAll(store, items) {
-  await store.setJSON(BLOB_KEY, items);
+async function writeWithLock(store, etag, items) {
+  // Verifica se o etag ainda é o mesmo antes de gravar
+  const current = await readWithEtag(store);
+  if (etag !== null && current.etag !== etag) {
+    throw new Error("etag_mismatch");
+  }
+  const newEtag = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  await store.setJSON(BLOB_KEY, { etag: newEtag, items });
+  return newEtag;
 }
+
+// Executa uma função que recebe { items, etag } e retorna items modificados.
+// Retenta automaticamente em caso de conflito.
+async function withLock(store, fn) {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const { items, etag } = await readWithEtag(store);
+    const updated = await fn(items);
+    try {
+      await writeWithLock(store, etag, updated);
+      return updated;
+    } catch (err) {
+      if (err.message !== "etag_mismatch") throw err;
+      const delay = BASE_DELAY * Math.pow(2, attempt) + Math.random() * 30;
+      console.warn(`[queue] conflito de escrita, tentativa ${attempt + 1}/${MAX_RETRIES} (aguardando ${Math.round(delay)}ms)`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error("Não foi possível gravar na fila após múltiplas tentativas. Tente novamente.");
+}
+
+// ─── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req) {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(req) });
@@ -58,38 +103,40 @@ export default async function handler(req) {
 
     // GET — retorna todos os itens
     if (req.method === "GET") {
-      const items = await readAll(store);
+      const { items } = await readWithEtag(store);
       return json(items, 200, req);
     }
 
     // POST — addBatch: insere ou substitui itens pelo id
     if (req.method === "POST") {
-      const body  = await req.json();
-      const news  = Array.isArray(body) ? body : [body];
-      const queue = await readAll(store);
+      const body = await req.json();
+      const news = Array.isArray(body) ? body : [body];
 
-      for (const item of news) {
-        if (!item?.id) continue;
-        const idx = queue.findIndex((x) => x.id === item.id);
-        if (idx >= 0) queue[idx] = item;
-        else queue.push(item);
-      }
+      const updated = await withLock(store, (queue) => {
+        for (const item of news) {
+          if (!item?.id) continue;
+          const idx = queue.findIndex((x) => x.id === item.id);
+          if (idx >= 0) queue[idx] = item;
+          else queue.push(item);
+        }
+        return queue;
+      });
 
-      await writeAll(store, queue);
-      return json({ saved: news.length, total: queue.length }, 200, req);
+      return json({ saved: news.length, total: updated.length }, 200, req);
     }
 
     // PUT — updateItem: atualiza um item pelo id
     if (req.method === "PUT") {
-      const item  = await req.json();
+      const item = await req.json();
       if (!item?.id) return json({ error: "id obrigatório" }, 400, req);
 
-      const queue = await readAll(store);
-      const idx   = queue.findIndex((x) => x.id === item.id);
-      if (idx >= 0) queue[idx] = item;
-      else queue.push(item);
+      await withLock(store, (queue) => {
+        const idx = queue.findIndex((x) => x.id === item.id);
+        if (idx >= 0) queue[idx] = item;
+        else queue.push(item);
+        return queue;
+      });
 
-      await writeAll(store, queue);
       return json(item, 200, req);
     }
 
@@ -99,12 +146,12 @@ export default async function handler(req) {
       const id  = url.searchParams.get("id");
 
       if (id) {
-        const queue   = await readAll(store);
-        const updated = queue.filter((x) => String(x.id) !== String(id));
-        await writeAll(store, updated);
+        const updated = await withLock(store, (queue) =>
+          queue.filter((x) => String(x.id) !== String(id))
+        );
         return json({ deleted: id, remaining: updated.length }, 200, req);
       } else {
-        await writeAll(store, []);
+        await withLock(store, () => []);
         return json({ cleared: true }, 200, req);
       }
     }

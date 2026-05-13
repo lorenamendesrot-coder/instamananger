@@ -14,39 +14,79 @@ function getQueueStore() {
 
 const BLOB_KEY = "queue-data";
 
-async function queueReadAll(store) {
+// ─── Lock otimista (mesmo mecanismo do queue.mjs) ─────────────────────────────
+
+const MAX_RETRIES = 5;
+const BASE_DELAY  = 80;
+
+async function readWithEtag(store) {
   try {
     const data = await store.get(BLOB_KEY, { type: "json" });
-    return Array.isArray(data) ? data : [];
+    if (data && Array.isArray(data.items)) {
+      return { items: data.items, etag: data.etag || null };
+    }
+    if (Array.isArray(data)) {
+      return { items: data, etag: null };
+    }
+    return { items: [], etag: null };
   } catch {
-    return [];
+    return { items: [], etag: null };
   }
 }
 
-async function queueWriteAll(store, items) {
-  await store.setJSON(BLOB_KEY, items);
+async function writeWithLock(store, etag, items) {
+  const current = await readWithEtag(store);
+  if (etag !== null && current.etag !== etag) {
+    throw new Error("etag_mismatch");
+  }
+  const newEtag = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  await store.setJSON(BLOB_KEY, { etag: newEtag, items });
+  return newEtag;
+}
+
+async function withLock(store, fn) {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const { items, etag } = await readWithEtag(store);
+    const updated = await fn(items);
+    try {
+      await writeWithLock(store, etag, updated);
+      return updated;
+    } catch (err) {
+      if (err.message !== "etag_mismatch") throw err;
+      const delay = BASE_DELAY * Math.pow(2, attempt) + Math.random() * 30;
+      console.warn(`[scheduler] conflito de escrita, tentativa ${attempt + 1}/${MAX_RETRIES} (aguardando ${Math.round(delay)}ms)`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error("Não foi possível gravar na fila após múltiplas tentativas.");
+}
+
+// ─── Helpers de fila usando withLock ─────────────────────────────────────────
+
+async function queueReadAll(store) {
+  const { items } = await readWithEtag(store);
+  return items;
 }
 
 async function queueUpdate(store, updatedItem) {
-  const queue = await queueReadAll(store);
-  const idx   = queue.findIndex((x) => x.id === updatedItem.id);
-  if (idx >= 0) queue[idx] = updatedItem;
-  else queue.push(updatedItem);
-  await queueWriteAll(store, queue);
+  await withLock(store, (queue) => {
+    const idx = queue.findIndex((x) => x.id === updatedItem.id);
+    if (idx >= 0) queue[idx] = updatedItem;
+    else queue.push(updatedItem);
+    return queue;
+  });
 }
 
 async function queueSave(store, newItem) {
-  const queue = await queueReadAll(store);
-  const idx   = queue.findIndex((x) => x.id === newItem.id);
-  if (idx >= 0) queue[idx] = newItem;
-  else queue.push(newItem);
-  await queueWriteAll(store, queue);
+  await withLock(store, (queue) => {
+    const idx = queue.findIndex((x) => x.id === newItem.id);
+    if (idx >= 0) queue[idx] = newItem;
+    else queue.push(newItem);
+    return queue;
+  });
 }
 
 // ─── Chama publish em batches até processar todas as contas ──────────────────
-// Cada invocação processa BATCH_SIZE contas (padrão 5).
-// Para 50 contas: 10 chamadas em sequência, cada uma ~2-4s = ~30-40s total.
-// Isso fica dentro do timeout da cron (26s por função, mas a cron em si não tem limite).
 async function callPublishAllBatches(item, mediaUrl) {
   const allResults = [];
   let offset = 0;
@@ -113,7 +153,6 @@ async function processVideoFinish(store, vf) {
       return;
     }
 
-    // Sem resultado = vídeo ainda IN_PROGRESS
     const attempts = (vf.attempts || 0) + 1;
     if (attempts >= (vf.maxAttempts || 20)) {
       await queueUpdate(store, { ...vf, status: "error", error: "Timeout: vídeo não processou após múltiplas tentativas" });
@@ -144,7 +183,6 @@ async function processItem(store, item) {
       const mediaUrl = urlsToPost[mi];
       if (mi > 0) await new Promise((r) => setTimeout(r, 3000));
 
-      // Retry com backoff (3 tentativas para a sequência de batches toda)
       let data, lastErr;
       for (let attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) await new Promise((r) => setTimeout(r, 5000 * Math.pow(3, attempt - 1)));
