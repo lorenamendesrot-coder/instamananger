@@ -6,6 +6,8 @@ self.addEventListener("install",  (e) => { e.waitUntil(self.skipWaiting()); });
 self.addEventListener("activate", (e) => { e.waitUntil(self.clients.claim()); startTicker(); });
 
 let tickerInterval = null;
+let _tickRunning   = false; // impede dois ticks simultâneos — causa do loop de video_finish
+
 function startTicker() {
   if (tickerInterval) clearInterval(tickerInterval);
   tickerInterval = setInterval(tick, TICK_INTERVAL);
@@ -14,20 +16,32 @@ function startTicker() {
 
 // ─── Tick principal ───────────────────────────────────────────────────────────
 async function tick() {
-  const queue = await readQueue();
-  const now   = Date.now();
+  // Se o tick anterior ainda não terminou, pula.
+  // Com 50 contas o processamento pode levar mais que TICK_INTERVAL (20s),
+  // causando ticks sobrepostos que disparam publish várias vezes no mesmo item.
+  if (_tickRunning) {
+    console.log("[SW] tick ignorado — anterior ainda em execução");
+    return;
+  }
+  _tickRunning = true;
+  try {
+    const queue = await readQueue();
+    const now   = Date.now();
 
-  // 1. Itens normais de agendamento (sem type)
-  const due = queue.filter(
-    (x) => !x.type && x.scheduledAt <= now && x.status === "pending"
-  );
-  for (const item of due) await runItem(item);
+    // 1. Itens normais de agendamento (sem type)
+    const due = queue.filter(
+      (x) => !x.type && x.scheduledAt <= now && x.status === "pending"
+    );
+    for (const item of due) await runItem(item);
 
-  // 2. Itens video_finish (vídeos aguardando processamento do Instagram)
-  const dueFin = queue.filter(
-    (x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now
-  );
-  for (const item of dueFin) await runVideoFinish(item);
+    // 2. Itens video_finish (vídeos aguardando processamento do Instagram)
+    const dueFin = queue.filter(
+      (x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now
+    );
+    for (const item of dueFin) await runVideoFinish(item);
+  } finally {
+    _tickRunning = false;
+  }
 }
 
 // ─── runItem — agendamento normal ────────────────────────────────────────────
