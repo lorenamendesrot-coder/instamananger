@@ -1,6 +1,7 @@
 // Queue.jsx — Fila de agendamentos com filtros de status + data
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useScheduler } from "../App.jsx";
+import CdnStatusBanner from "../components/CdnStatusBanner.jsx";
 import Modal from "../Modal.jsx";
 
 const SORT_OPTIONS = [
@@ -279,6 +280,9 @@ export default function Queue() {
           )}
         </div>
       )}
+
+      {/* Banner CDN */}
+      <CdnStatusBanner />
 
       {/* Stats */}
       {mainQueue.length > 0 && (
