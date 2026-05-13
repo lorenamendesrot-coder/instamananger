@@ -1,25 +1,7 @@
 // scheduler.mjs
-// Cron function — roda a cada 5 minutos no servidor, independente do browser.
-// Lê a fila do Netlify Blobs, processa itens vencidos e publica via publish.mjs.
-// O scheduler do React continua funcionando como fallback quando o site está aberto.
-//
-// Fluxo:
-//   1. Lê toda a fila (GET /api/queue)
-//   2. Separa itens "due" (scheduledAt <= agora, status === "pending")
-//   3. Para cada item: marca "running", chama /publish ou /publish-finish, atualiza status
-//   4. Itens com loop são reagendados para +24h
-//   5. Itens video_finish não prontos são reagendados para +20s
-//
-// Proteção contra dupla execução:
-//   Marca o item como "running" ANTES de chamar a API.
-//   Se a função for invocada novamente em 5 min e o item ainda estiver "running"
-//   por mais de 3 minutos (stuck), ele é resetado para "pending".
-
 import { getStore } from "@netlify/blobs";
 
 const SITE_URL = process.env.URL || process.env.NETLIFY_URL || "";
-
-// ─── Helpers da fila (mesma interface do frontend) ────────────────────────────
 
 function getQueueStore() {
   return getStore({
@@ -61,25 +43,40 @@ async function queueSave(store, newItem) {
   await queueWriteAll(store, queue);
 }
 
-// ─── Chamadas internas às functions ──────────────────────────────────────────
+// ─── Chama publish em batches até processar todas as contas ──────────────────
+// Cada invocação processa BATCH_SIZE contas (padrão 5).
+// Para 50 contas: 10 chamadas em sequência, cada uma ~2-4s = ~30-40s total.
+// Isso fica dentro do timeout da cron (26s por função, mas a cron em si não tem limite).
+async function callPublishAllBatches(item, mediaUrl) {
+  const allResults = [];
+  let offset = 0;
 
-async function callPublish(item, mediaUrl) {
-  const res = await fetch(`${SITE_URL}/.netlify/functions/publish`, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      accounts:        item.accounts,
-      media_url:       mediaUrl,
-      media_type:      item.mediaType,
-      post_type:       item.postType,
-      captions:        item.captions        || {},
-      default_caption: item.caption         || "",
-      delay_seconds:   0,
-      skip_rate_limit: !!item.warmup,
-    }),
-  });
-  if (!res.ok) throw new Error(`publish HTTP ${res.status}`);
-  return res.json();
+  while (offset < item.accounts.length) {
+    const res = await fetch(`${SITE_URL}/.netlify/functions/publish`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accounts:        item.accounts,
+        media_url:       mediaUrl,
+        media_type:      item.mediaType,
+        post_type:       item.postType,
+        captions:        item.captions        || {},
+        default_caption: item.caption         || "",
+        skip_rate_limit: !!item.warmup,
+        batch_offset:    offset,
+      }),
+    });
+
+    if (!res.ok) throw new Error(`publish HTTP ${res.status} (offset ${offset})`);
+    const data = await res.json();
+
+    allResults.push(...(data.results || []));
+
+    if (!data.has_more) break;
+    offset = data.next_offset;
+  }
+
+  return { results: allResults };
 }
 
 async function callPublishFinish(vf) {
@@ -95,8 +92,7 @@ async function callPublishFinish(vf) {
   return res.json();
 }
 
-// ─── Processamento de um item de vídeo pendente ───────────────────────────────
-
+// ─── Processamento de video_finish ───────────────────────────────────────────
 async function processVideoFinish(store, vf) {
   console.log(`[scheduler] video_finish @${vf.username} (${vf.creation_id})`);
   await queueUpdate(store, { ...vf, status: "running" });
@@ -112,17 +108,17 @@ async function processVideoFinish(store, vf) {
     }
 
     if (result && !result.success) {
-      console.error(`[scheduler] ❌ video_finish @${vf.username} erro: ${result.error}`);
+      console.error(`[scheduler] ❌ video_finish @${vf.username}: ${result.error}`);
       await queueUpdate(store, { ...vf, status: "error", error: result.error });
       return;
     }
 
-    // Sem resultado = vídeo ainda IN_PROGRESS — reagenda em 20s
+    // Sem resultado = vídeo ainda IN_PROGRESS
     const attempts = (vf.attempts || 0) + 1;
     if (attempts >= (vf.maxAttempts || 20)) {
       await queueUpdate(store, { ...vf, status: "error", error: "Timeout: vídeo não processou após múltiplas tentativas" });
     } else {
-      console.log(`[scheduler] video_finish @${vf.username} ainda processando (tentativa ${attempts})`);
+      console.log(`[scheduler] video_finish @${vf.username} IN_PROGRESS (tentativa ${attempts})`);
       await queueUpdate(store, { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
     }
   } catch (err) {
@@ -135,10 +131,10 @@ async function processVideoFinish(store, vf) {
   }
 }
 
-// ─── Processamento de um item normal ─────────────────────────────────────────
-
+// ─── Processamento de item normal ─────────────────────────────────────────────
 async function processItem(store, item) {
-  console.log(`[scheduler] processando item ${item.id} (${item.postType}, ${(item.accounts || []).length} contas)`);
+  const total = (item.accounts || []).length;
+  console.log(`[scheduler] item ${item.id} — ${total} conta(s), tipo ${item.postType}`);
   await queueUpdate(store, { ...item, status: "running" });
 
   try {
@@ -148,30 +144,28 @@ async function processItem(store, item) {
       const mediaUrl = urlsToPost[mi];
       if (mi > 0) await new Promise((r) => setTimeout(r, 3000));
 
-      // Retry com backoff (3 tentativas)
+      // Retry com backoff (3 tentativas para a sequência de batches toda)
       let data, lastErr;
       for (let attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) await new Promise((r) => setTimeout(r, 5000 * Math.pow(3, attempt - 1)));
         try {
-          data = await callPublish(item, mediaUrl);
+          data = await callPublishAllBatches(item, mediaUrl);
           break;
         } catch (err) {
           lastErr = err;
-          console.warn(`[scheduler] tentativa ${attempt + 1} falhou para item ${item.id}: ${err.message}`);
+          console.warn(`[scheduler] tentativa ${attempt + 1} falhou: ${err.message}`);
         }
       }
 
-      if (!data) throw lastErr || new Error("Falha ao chamar publish após 3 tentativas");
+      if (!data) throw lastErr || new Error("Falha ao publicar após 3 tentativas");
 
-      const results         = data.results || [];
-      const pendingResults  = results.filter((r) => r.pending && r.creation_id);
-      const historyId       = `h-${Date.now()}-${mi}`;
+      const results        = data.results || [];
+      const pendingResults = results.filter((r) => r.pending && r.creation_id);
+      const historyId      = `h-${Date.now()}-${mi}`;
 
-      // Enfileira video_finish para cada vídeo ainda em processamento
       for (const pr of pendingResults) {
-        const vfId = `vf-${historyId}-${pr.account_id}`;
         await queueSave(store, {
-          id:          vfId,
+          id:          `vf-${historyId}-${pr.account_id}`,
           type:        "video_finish",
           status:      "pending",
           creation_id: pr.creation_id,
@@ -190,11 +184,12 @@ async function processItem(store, item) {
         });
       }
 
-      console.log(`[scheduler] item ${item.id} — ${results.filter((r) => r.success).length} ok, ${pendingResults.length} vídeos pendentes, ${results.filter((r) => !r.success && !r.pending).length} erros`);
+      const ok  = results.filter((r) => r.success).length;
+      const err = results.filter((r) => !r.success && !r.pending).length;
+      console.log(`[scheduler] item ${item.id} — ${ok} ok, ${pendingResults.length} vídeos pendentes, ${err} erros`);
     }
 
     if (item.loop) {
-      // Loop diário: reagenda para +24h
       await queueUpdate(store, {
         ...item,
         status:      "pending",
@@ -205,7 +200,7 @@ async function processItem(store, item) {
       await queueUpdate(store, { ...item, status: "done", finishedAt: new Date().toISOString() });
     }
   } catch (err) {
-    console.error(`[scheduler] ❌ item ${item.id} erro: ${err.message}`);
+    console.error(`[scheduler] ❌ item ${item.id}: ${err.message}`);
     await queueUpdate(store, {
       ...item,
       status:     "error",
@@ -217,12 +212,11 @@ async function processItem(store, item) {
 }
 
 // ─── Handler principal ────────────────────────────────────────────────────────
-
 export default async function handler() {
   console.log("[scheduler] tick às", new Date().toISOString());
 
   if (!SITE_URL) {
-    console.error("[scheduler] URL do site não configurada (env var URL ou NETLIFY_URL). Abortando.");
+    console.error("[scheduler] SITE_URL não configurada. Abortando.");
     return new Response(JSON.stringify({ error: "SITE_URL não configurada" }), { status: 500 });
   }
 
@@ -230,15 +224,15 @@ export default async function handler() {
   try {
     store = getQueueStore();
   } catch (err) {
-    console.error("[scheduler] não foi possível abrir o store:", err.message);
+    console.error("[scheduler] store inacessível:", err.message);
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 
   const queue = await queueReadAll(store);
   const now   = Date.now();
 
-  // Reseta itens "running" travados por mais de 3 minutos (deploy ou crash anterior)
-  const STUCK_MS  = 3 * 60 * 1000;
+  // Reseta itens "running" travados por mais de 3 minutos
+  const STUCK_MS   = 3 * 60 * 1000;
   const stuckItems = queue.filter(
     (x) => x.status === "running" && x.startedAt && now - new Date(x.startedAt).getTime() > STUCK_MS
   );
@@ -247,36 +241,27 @@ export default async function handler() {
     await queueUpdate(store, { ...item, status: "pending", scheduledAt: now + 5000 });
   }
 
-  // Separa itens vencidos por tipo
   const dueNormal = queue.filter((x) => !x.type        && x.status === "pending" && x.scheduledAt <= now);
   const dueFinish = queue.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now);
 
-  const total = dueNormal.length + dueFinish.length;
   console.log(`[scheduler] ${dueNormal.length} posts + ${dueFinish.length} video_finish vencidos`);
 
-  if (total === 0) {
+  if (dueNormal.length === 0 && dueFinish.length === 0) {
     return new Response(JSON.stringify({ ok: true, processed: 0 }), {
       status: 200, headers: { "Content-Type": "application/json" },
     });
   }
 
-  // Processa video_finish primeiro (são mais rápidos)
-  for (const vf of dueFinish) {
-    await processVideoFinish(store, { ...vf, startedAt: new Date().toISOString() });
-  }
+  for (const vf   of dueFinish) await processVideoFinish(store, { ...vf, startedAt: new Date().toISOString() });
+  for (const item of dueNormal) await processItem(store,        { ...item, startedAt: new Date().toISOString() });
 
-  // Processa posts normais
-  for (const item of dueNormal) {
-    await processItem(store, { ...item, startedAt: new Date().toISOString() });
-  }
-
+  const total = dueNormal.length + dueFinish.length;
   console.log(`[scheduler] concluído — ${total} item(s) processados`);
   return new Response(JSON.stringify({ ok: true, processed: total }), {
     status: 200, headers: { "Content-Type": "application/json" },
   });
 }
 
-// Roda a cada 5 minutos
 export const config = {
   schedule: "*/5 * * * *",
 };

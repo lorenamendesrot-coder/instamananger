@@ -9,9 +9,6 @@ const sleep          = (ms) => new Promise((r) => setTimeout(r, ms));
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
 // ─── Rate limit persistido no Netlify Blobs ───────────────────────────────────
-// Cada conta tem um blob "rl-<id>" com:
-//   { postsToday, postsHour, lastPostAt, dateKey, hourKey }
-// Assim os contadores sobrevivem a deploys e reinícios da função serverless.
 
 function getRLStore() {
   const siteID = process.env.NETLIFY_SITE_ID;
@@ -25,6 +22,11 @@ const MAX_HOUR = parseInt(process.env.MAX_POSTS_PER_HOUR || "1");
 const MIN_GAP  = parseInt(process.env.MIN_GAP_MINUTES    || "10");
 const W_START  = parseInt(process.env.POST_WINDOW_START  || "7");
 const W_END    = parseInt(process.env.POST_WINDOW_END    || "23");
+
+// Tamanho máximo do batch por invocação. Env var permite ajustar sem redeploy.
+// Com 5 contas em paralelo e ~400ms por conta na Meta API, cada invocação
+// termina em ~2-4s — bem dentro do limite de 26s do Netlify.
+const BATCH_SIZE = parseInt(process.env.PUBLISH_BATCH_SIZE || "5");
 
 function fmtWait(ms) {
   if (ms <= 0) return "agora";
@@ -40,16 +42,13 @@ async function loadState(store, id) {
   const now = new Date();
   const dk  = now.toISOString().slice(0, 10);
   const hk  = `${dk}-${now.getUTCHours()}`;
-
   let s = { postsToday: 0, postsHour: 0, lastPostAt: null, dateKey: "", hourKey: "" };
   try {
     const raw = await store.get(`rl-${id}`, { type: "json" });
     if (raw) s = raw;
-  } catch { /* blob ainda não existe — usa zeros */ }
-
+  } catch {}
   if (s.dateKey !== dk) { s.postsToday = 0; s.dateKey = dk; }
   if (s.hourKey !== hk) { s.postsHour  = 0; s.hourKey = hk; }
-
   return s;
 }
 
@@ -65,7 +64,6 @@ async function canPublish(store, id) {
   const s   = await loadState(store, id);
   const now = Date.now();
   const h   = new Date(now).getUTCHours();
-
   if (h < W_START || h >= W_END) {
     const n = new Date(now);
     if (h >= W_END) n.setUTCDate(n.getUTCDate() + 1);
@@ -172,6 +170,36 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
   }
 }
 
+// ─── Processa uma conta (rate-limit + publish) ────────────────────────────────
+async function processAccount({ store, account, media_url, media_type, post_type, captions, default_caption, skip_rate_limit }) {
+  let state = null;
+
+  if (!skip_rate_limit && store) {
+    const check = await canPublish(store, account.id);
+    if (!check.ok) {
+      return {
+        account_id:   account.id,
+        username:     account.username,
+        success:      false,
+        rate_limited: true,
+        error:        check.reason,
+        wait_ms:      check.waitMs,
+        wait_human:   fmtWait(check.waitMs),
+      };
+    }
+    state = check.state;
+  }
+
+  const caption = captions?.[account.id] ?? default_caption ?? "";
+  const result  = await publishOne({ account, media_url, media_type, post_type, caption });
+
+  if (store && state) {
+    await recordPost(store, account.id, state, result.success);
+  }
+
+  return { account_id: account.id, username: account.username, ...result };
+}
+
 // ─── Handler ──────────────────────────────────────────────────────────────────
 export const handler = async (event) => {
   const origin     = event.headers?.origin || "";
@@ -190,7 +218,8 @@ export const handler = async (event) => {
   try { body = JSON.parse(event.body || "{}"); }
   catch { return { statusCode: 400, headers, body: JSON.stringify({ error: "JSON inválido" }) }; }
 
-  const { accounts, media_url, media_type, post_type, captions, default_caption, delay_seconds, skip_rate_limit } = body;
+  const { accounts, media_url, media_type, post_type, captions, default_caption, skip_rate_limit,
+          batch_offset = 0 } = body;
 
   if (!accounts?.length || !media_url || !media_type || !post_type)
     return { statusCode: 400, headers, body: JSON.stringify({ error: "Campos obrigatórios ausentes" }) };
@@ -202,40 +231,31 @@ export const handler = async (event) => {
     console.warn("[publish] Blobs não configurado, rate-limit desativado:", err.message);
   }
 
-  const delayMs = (parseInt(String(delay_seconds)) || 0) * 1000;
-  const results = [];
+  // ── Fatiamento ──────────────────────────────────────────────────────────────
+  // Pega só o slice desta invocação.
+  // Se ainda houver contas além do batch, devolve has_more: true e next_offset
+  // para o chamador (scheduler ou frontend) invocar novamente com o próximo offset.
+  const batch     = accounts.slice(batch_offset, batch_offset + BATCH_SIZE);
+  const next      = batch_offset + BATCH_SIZE;
+  const has_more  = next < accounts.length;
 
-  for (let i = 0; i < accounts.length; i++) {
-    if (i > 0 && delayMs > 0) await sleep(delayMs);
-    const account = accounts[i];
+  console.log(`[publish] batch ${batch_offset}–${batch_offset + batch.length - 1} de ${accounts.length} conta(s)`);
 
-    let state = null;
-    if (!skip_rate_limit && store) {
-      const check = await canPublish(store, account.id);
-      if (!check.ok) {
-        results.push({
-          account_id:   account.id,
-          username:     account.username,
-          success:      false,
-          rate_limited: true,
-          error:        check.reason,
-          wait_ms:      check.waitMs,
-          wait_human:   fmtWait(check.waitMs),
-        });
-        continue;
-      }
-      state = check.state;
-    }
+  // Publica todas as contas do batch em paralelo
+  const results = await Promise.all(
+    batch.map((account) =>
+      processAccount({ store, account, media_url, media_type, post_type, captions, default_caption, skip_rate_limit })
+    )
+  );
 
-    const caption = captions?.[account.id] ?? default_caption ?? "";
-    const result  = await publishOne({ account, media_url, media_type, post_type, caption });
-
-    if (store && state) {
-      await recordPost(store, account.id, state, result.success);
-    }
-
-    results.push({ account_id: account.id, username: account.username, ...result });
-  }
-
-  return { statusCode: 200, headers, body: JSON.stringify({ results }) };
+  return {
+    statusCode: 200,
+    headers,
+    body: JSON.stringify({
+      results,
+      has_more,
+      next_offset: has_more ? next : null,
+      batch_size:  BATCH_SIZE,
+    }),
+  };
 };
