@@ -33,11 +33,11 @@ export default function Warmup() {
   const [bulkCaptions, setBulkCaptions] = useState("");
   const [captionMode,  setCaptionMode]  = useState("roundrobin");
   const [startDate,    setStartDate]    = useState(() => {
-    // Usa data LOCAL (não UTC) para não avançar o dia em fusos negativos (Brasil UTC-3)
+    // Usa data LOCAL para não avançar o dia em fusos negativos (Brasil UTC-3)
     const now = new Date();
     const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-    // Se já passou das 22h locais, começa amanhã para não gerar fila muito curta
-    if (now.getHours() >= 22) {
+    // Só avança para amanhã depois das 23h locais — mantém hoje como padrão o dia todo
+    if (now.getHours() >= 23) {
       localDate.setDate(localDate.getDate() + 1);
     }
     return localDate.toISOString().slice(0, 10);
