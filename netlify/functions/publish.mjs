@@ -20,8 +20,11 @@ function getRLStore() {
 const MAX_DAY  = parseInt(process.env.MAX_POSTS_PER_DAY  || "50");
 const MAX_HOUR = parseInt(process.env.MAX_POSTS_PER_HOUR || "1");
 const MIN_GAP  = parseInt(process.env.MIN_GAP_MINUTES    || "10");
-const W_START  = parseInt(process.env.POST_WINDOW_START  || "7");
+// W_START e W_END em hora LOCAL (ex: 9 = 9h de Brasília)
+const W_START  = parseInt(process.env.POST_WINDOW_START  || "9");
 const W_END    = parseInt(process.env.POST_WINDOW_END    || "23");
+// Offset do fuso em horas. Brasil/BRT = -3. Ajuste via env var se necessário.
+const TZ_OFFSET = parseInt(process.env.TZ_OFFSET_HOURS   || "-3");
 
 // Tamanho máximo do batch por invocação. Env var permite ajustar sem redeploy.
 // Com 5 contas em paralelo e ~400ms por conta na Meta API, cada invocação
@@ -39,9 +42,13 @@ function fmtWait(ms) {
 }
 
 async function loadState(store, id) {
-  const now = new Date();
-  const dk  = now.toISOString().slice(0, 10);
-  const hk  = `${dk}-${now.getUTCHours()}`;
+  const now    = new Date();
+  // Usa hora local (ajustada pelo TZ_OFFSET) para as chaves de janela.
+  // Assim o reset diário e horário acontece na meia-noite local, não UTC.
+  const localH = ((now.getUTCHours() + TZ_OFFSET) % 24 + 24) % 24;
+  const localNow = new Date(now.getTime() + TZ_OFFSET * 3600000);
+  const dk  = localNow.toISOString().slice(0, 10);
+  const hk  = `${dk}-${localH}`;
   let s = { postsToday: 0, postsHour: 0, lastPostAt: null, dateKey: "", hourKey: "" };
   try {
     const raw = await store.get(`rl-${id}`, { type: "json" });
@@ -61,19 +68,24 @@ async function saveState(store, id, s) {
 }
 
 async function canPublish(store, id) {
-  const s   = await loadState(store, id);
-  const now = Date.now();
-  const h   = new Date(now).getUTCHours();
-  if (h < W_START || h >= W_END) {
+  const s      = await loadState(store, id);
+  const now    = Date.now();
+  // Converte para hora local usando TZ_OFFSET
+  const localH = ((new Date(now).getUTCHours() + TZ_OFFSET) % 24 + 24) % 24;
+  if (localH < W_START || localH >= W_END) {
+    // Calcula quanto falta para W_START na hora local
     const n = new Date(now);
-    if (h >= W_END) n.setUTCDate(n.getUTCDate() + 1);
-    n.setUTCHours(W_START, 0, 0, 0);
-    const w = n - now;
-    return { ok: false, state: s, reason: `Fora da janela (${W_START}h–${W_END}h UTC). Aguardar ${fmtWait(w)}.`, waitMs: w };
+    const hoursUntilStart = localH >= W_END
+      ? (24 - localH + W_START)   // passou do fim: próximo dia
+      : (W_START - localH);        // antes do início: hoje mesmo
+    const w = hoursUntilStart * 3600000 - (new Date(now).getMinutes() * 60000 + new Date(now).getSeconds() * 1000);
+    return { ok: false, state: s, reason: `Fora da janela (${W_START}h–${W_END}h local). Aguardar ${fmtWait(Math.max(w, 0))}.`, waitMs: Math.max(w, 0) };
   }
   if (s.postsToday >= MAX_DAY) {
+    // Próximo W_START local = próxima meia-noite local + W_START horas
     const n = new Date(now);
-    n.setUTCDate(n.getUTCDate() + 1); n.setUTCHours(W_START, 0, 0, 0);
+    n.setUTCHours(n.getUTCHours() + (24 - localH), 0, 0, 0); // meia-noite local em UTC
+    n.setTime(n.getTime() + W_START * 3600000);
     const w = n - now;
     return { ok: false, state: s, reason: `Limite diário (${s.postsToday}/${MAX_DAY}). Aguardar ${fmtWait(w)}.`, waitMs: w };
   }
