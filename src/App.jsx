@@ -1,4 +1,5 @@
 import { Routes, Route, useLocation } from "react-router-dom";
+import { useCdnMonitor, isCdnError } from "./useCdnMonitor.js";
 import { useEffect, useState, useCallback, useRef, createContext, useContext } from "react";
 
 // Páginas
@@ -109,6 +110,18 @@ const qApi = {
 function SchedulerProvider({ addEntry, children }) {
   const [queue, setQueue] = useState([]);
   const runningRef = useRef(new Set());
+
+  // ── Monitor de CDN ───────────────────────────────────────────────────────
+  const { cdnPaused, cdnStatus, checkCdn, pauseForCdn, resumeCdn } = useCdnMonitor(
+    queue,
+    (evt) => {
+      if (evt.type === "paused") window.dispatchEvent(new CustomEvent("cdn:paused",  { detail: evt }));
+      if (evt.type === "resumed") {
+        window.dispatchEvent(new CustomEvent("cdn:resumed", { detail: evt }));
+        reload();
+      }
+    }
+  );
 
   const reload = useCallback(async () => {
     const all = await qApi.getAll();
@@ -224,6 +237,12 @@ function SchedulerProvider({ addEntry, children }) {
         reload();
       }
 
+      // ── Verificar se CDN está pausado ───────────────────────────────────
+      if (cdnPaused) {
+        console.log("[scheduler] CDN pausado — fila suspensa até CDN voltar");
+        return;
+      }
+
       // Se o cron serverless está ativo, não processa posts normais no browser
       // para evitar publicações duplicadas. Apenas video_finish roda aqui
       // (precisa de polling em tempo real para atualizar o histórico na UI).
@@ -269,6 +288,21 @@ function SchedulerProvider({ addEntry, children }) {
             if (!res || !res.ok) throw lastErr || new Error(`HTTP ${res?.status}`);
             const data    = await res.json();
             const results = data.results || [];
+
+            // Detectar se algum erro é de CDN indisponível
+            const cdnErrors = results.filter((r) => !r.success && isCdnError(r.error));
+            if (cdnErrors.length >= 2) {
+              // 2+ contas com erro de CDN = CDN provavelmente fora
+              const cdnErr   = cdnErrors[0].error;
+              const checkRes = await checkCdn([mediaUrl]);
+              if (checkRes && !checkRes.ok) {
+                const cdnName = checkRes.cdnsDown?.[0]?.name || "CDN";
+                await pauseForCdn(`${cdnName} indisponível: ${cdnErr}`, cdnName);
+                // Reagendar item para daqui 10 min (quando CDN voltar, retomará)
+                await qApi.update({ ...item, status: "pending", scheduledAt: Date.now() + 10 * 60_000 });
+                break;
+              }
+            }
 
             const pendingResults  = results.filter((r) => r.pending && r.creation_id);
             const finishedResults = results.filter((r) => !r.pending);
@@ -369,7 +403,7 @@ function SchedulerProvider({ addEntry, children }) {
   };
 
   return (
-    <SchedulerContext.Provider value={{ queue, addBatch, updateItem, removeItem, clearQueue, cancelPending, resumeQueue, reload }}>
+    <SchedulerContext.Provider value={{ queue, addBatch, updateItem, removeItem, clearQueue, cancelPending, resumeQueue, reload, cdnPaused, cdnStatus, resumeCdn }}>
       {children}
     </SchedulerContext.Provider>
   );
