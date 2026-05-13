@@ -5,7 +5,7 @@ import { dbGet, dbPut } from "../useDB.js";
 import { useHealthCheck } from "../hooks/useHealthCheck.js";
 import HealthCheckPanel from "../components/HealthCheckPanel.jsx";
 
-const DEFAULTS = { maxPerDay: 50, maxPerHour: 4, minGapMin: 10, windowStart: 7, windowEnd: 23 };
+const DEFAULTS = { maxPerDay: 50, maxPerHour: 4, minGapMin: 10 };
 const DB_KEY   = "protection_config";
 
 async function loadCfgFromDB() {
@@ -218,34 +218,6 @@ export default function Protection() {
               <Slider label="Máximo por hora"  hint="Posts dentro de 1 hora"             val={vals.maxPerHour} min={1} max={20}  unit="posts" onChange={set("maxPerHour")} />
               <Slider label="Intervalo mínimo" hint="Tempo mínimo entre um post e outro" val={vals.minGapMin}  min={1} max={120} unit="min"   onChange={set("minGapMin")} />
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Início da janela</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <input type="range" min={0} max={22} value={vals.windowStart}
-                      onChange={e => { const v = Number(e.target.value); if (v < vals.windowEnd) set("windowStart")(v); }}
-                      style={{ flex: 1, accentColor: "var(--accent)" }} />
-                    <span style={{ fontSize: 14, fontWeight: 700, minWidth: 44 }}>{vals.windowStart}:00</span>
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Fim da janela</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <input type="range" min={1} max={23} value={vals.windowEnd}
-                      onChange={e => { const v = Number(e.target.value); if (v > vals.windowStart) set("windowEnd")(v); }}
-                      style={{ flex: 1, accentColor: "var(--accent)" }} />
-                    <span style={{ fontSize: 14, fontWeight: 700, minWidth: 44 }}>{vals.windowEnd}:00</span>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ padding: "10px 14px", borderRadius: 10, background: "rgba(124,92,252,0.06)",
-                border: "1px solid rgba(124,92,252,0.15)", fontSize: 12, color: "var(--muted)", marginBottom: 20 }}>
-                ℹ️ Janela: <b style={{ color: "var(--text)" }}>{vals.windowStart}:00–{vals.windowEnd}:00 UTC</b>
-                {" · "}<b style={{ color: "var(--text)" }}>{vals.maxPerDay}</b> posts/dia
-                {" · "}<b style={{ color: "var(--text)" }}>{vals.maxPerHour}</b> posts/h
-                {" · "}<b style={{ color: "var(--text)" }}>{vals.minGapMin}</b> min intervalo
-              </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
                 {dirty && <button className="btn btn-ghost" onClick={handleDiscard}>Descartar</button>}
@@ -263,7 +235,7 @@ export default function Protection() {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
                     <tr style={{ borderBottom: "1px solid var(--border)", background: "var(--bg3)" }}>
-                      {["Conta","Máx/dia","Máx/hora","Intervalo","Janela","Config"].map(h => (
+                      {["Conta","Máx/dia","Máx/hora","Intervalo","Config"].map(h => (
                         <th key={h} style={{ padding: "9px 14px", textAlign: "left", color: "var(--muted)", fontWeight: 600, fontSize: 11 }}>{h}</th>
                       ))}
                     </tr>
@@ -278,7 +250,6 @@ export default function Protection() {
                           <td style={{ padding: "9px 14px", color: "var(--muted)" }}>{c.maxPerDay}</td>
                           <td style={{ padding: "9px 14px", color: "var(--muted)" }}>{c.maxPerHour}</td>
                           <td style={{ padding: "9px 14px", color: "var(--muted)" }}>{c.minGapMin}min</td>
-                          <td style={{ padding: "9px 14px", color: "var(--muted)" }}>{c.windowStart}:00–{c.windowEnd}:00</td>
                           <td style={{ padding: "9px 14px" }}>
                             <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4,
                               background: own ? "rgba(124,92,252,0.15)" : "rgba(100,100,120,0.1)",
