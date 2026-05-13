@@ -127,8 +127,29 @@ function SchedulerProvider({ addEntry, children }) {
   }, [reload]);
 
   // ─── Tick do scheduler ───────────────────────────────────────────────────────
+  // O cron serverless (scheduler.mjs) roda a cada 5min no Netlify e é a fonte
+  // principal de execução. O scheduler do browser atua como fallback para:
+  //   1. Ambiente local (cron não existe)
+  //   2. video_finish — precisa de polling em tempo real para atualizar a UI
+  // Para evitar posts duplicados, o browser NÃO processa posts normais quando
+  // detecta que o cron serverless está ativo (responde ao ping).
   useEffect(() => {
-    // Reseta itens "running" travados
+    let cronAvailable = false;
+
+    const detectCron = async () => {
+      try {
+        const res = await fetch("/api/scheduler", { method: "GET" });
+        cronAvailable = res.ok || res.status === 405; // 405 = existe mas não aceita GET
+      } catch {
+        cronAvailable = false;
+      }
+    };
+
+    // Detecta na inicialização e re-verifica a cada 5min
+    detectCron().catch(() => {});
+    const cronCheck = setInterval(() => detectCron().catch(() => {}), 5 * 60 * 1000);
+
+    // Reseta itens "running" travados (sempre, independente do cron)
     const resetStuck = async () => {
       const all = await qApi.getAll();
       if (!Array.isArray(all)) return;
@@ -203,7 +224,10 @@ function SchedulerProvider({ addEntry, children }) {
         reload();
       }
 
-      if (!due.length) return;
+      // Se o cron serverless está ativo, não processa posts normais no browser
+      // para evitar publicações duplicadas. Apenas video_finish roda aqui
+      // (precisa de polling em tempo real para atualizar o histórico na UI).
+      if (cronAvailable || !due.length) return;
 
       for (const item of due) {
         if (runningRef.current.has(item.id)) continue;
@@ -307,7 +331,7 @@ function SchedulerProvider({ addEntry, children }) {
 
     const iv = setInterval(tick, 10000);
     tick();
-    return () => clearInterval(iv);
+    return () => { clearInterval(iv); clearInterval(cronCheck); };
   }, [addEntry, reload]);
 
   const addBatch = async (items) => {
