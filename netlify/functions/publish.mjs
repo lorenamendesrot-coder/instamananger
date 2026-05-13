@@ -1,25 +1,27 @@
 // publish.mjs
+import { getStore } from "@netlify/blobs";
+
 const GRAPH_FB       = "https://graph.facebook.com/v21.0";
 const GRAPH_IG       = "https://graph.instagram.com";
-function isIGToken(t) { return t?.startsWith('IGAA'); }
+function isIGToken(t) { return t?.startsWith("IGAA"); }
 function graph(t)    { return isIGToken(t) ? GRAPH_IG : GRAPH_FB; }
 const sleep          = (ms) => new Promise((r) => setTimeout(r, ms));
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
-// ─── Rate limit em memória ────────────────────────────────────────────────────
-const warmupState = new Map();
+// ─── Rate limit persistido no Netlify Blobs ───────────────────────────────────
+// Cada conta tem um blob "rl-<id>" com:
+//   { postsToday, postsHour, lastPostAt, dateKey, hourKey }
+// Assim os contadores sobrevivem a deploys e reinícios da função serverless.
 
-function getState(id) {
-  if (!warmupState.has(id)) warmupState.set(id, { postsToday: 0, postsHour: 0, lastPostAt: null, dateKey: "", hourKey: "" });
-  const s = warmupState.get(id), now = new Date();
-  const dk = now.toISOString().slice(0, 10), hk = `${dk}-${now.getUTCHours()}`;
-  if (s.dateKey !== dk) { s.postsToday = 0; s.dateKey = dk; }
-  if (s.hourKey !== hk) { s.postsHour  = 0; s.hourKey = hk; }
-  return s;
+function getRLStore() {
+  const siteID = process.env.NETLIFY_SITE_ID;
+  const token  = process.env.NETLIFY_TOKEN;
+  if (!siteID || !token) throw new Error("Configure NETLIFY_SITE_ID e NETLIFY_TOKEN");
+  return getStore({ name: "insta-ratelimit", siteID, token, consistency: "strong" });
 }
 
 const MAX_DAY  = parseInt(process.env.MAX_POSTS_PER_DAY  || "50");
-const MAX_HOUR = parseInt(process.env.MAX_POSTS_PER_HOUR || "4");
+const MAX_HOUR = parseInt(process.env.MAX_POSTS_PER_HOUR || "1");
 const MIN_GAP  = parseInt(process.env.MIN_GAP_MINUTES    || "10");
 const W_START  = parseInt(process.env.POST_WINDOW_START  || "7");
 const W_END    = parseInt(process.env.POST_WINDOW_END    || "23");
@@ -34,40 +36,70 @@ function fmtWait(ms) {
   return r ? `${h}h ${r}m` : `${h}h`;
 }
 
-function canPublish(id) {
-  const s = getState(id), now = Date.now(), h = new Date(now).getUTCHours();
+async function loadState(store, id) {
+  const now = new Date();
+  const dk  = now.toISOString().slice(0, 10);
+  const hk  = `${dk}-${now.getUTCHours()}`;
+
+  let s = { postsToday: 0, postsHour: 0, lastPostAt: null, dateKey: "", hourKey: "" };
+  try {
+    const raw = await store.get(`rl-${id}`, { type: "json" });
+    if (raw) s = raw;
+  } catch { /* blob ainda não existe — usa zeros */ }
+
+  if (s.dateKey !== dk) { s.postsToday = 0; s.dateKey = dk; }
+  if (s.hourKey !== hk) { s.postsHour  = 0; s.hourKey = hk; }
+
+  return s;
+}
+
+async function saveState(store, id, s) {
+  try {
+    await store.setJSON(`rl-${id}`, s);
+  } catch (err) {
+    console.warn(`[publish] aviso: não foi possível salvar rate-limit de ${id}:`, err.message);
+  }
+}
+
+async function canPublish(store, id) {
+  const s   = await loadState(store, id);
+  const now = Date.now();
+  const h   = new Date(now).getUTCHours();
 
   if (h < W_START || h >= W_END) {
     const n = new Date(now);
     if (h >= W_END) n.setUTCDate(n.getUTCDate() + 1);
     n.setUTCHours(W_START, 0, 0, 0);
     const w = n - now;
-    return { ok: false, reason: `Fora da janela (${W_START}h–${W_END}h UTC). Aguardar ${fmtWait(w)}.`, waitMs: w };
+    return { ok: false, state: s, reason: `Fora da janela (${W_START}h–${W_END}h UTC). Aguardar ${fmtWait(w)}.`, waitMs: w };
   }
   if (s.postsToday >= MAX_DAY) {
     const n = new Date(now);
     n.setUTCDate(n.getUTCDate() + 1); n.setUTCHours(W_START, 0, 0, 0);
     const w = n - now;
-    return { ok: false, reason: `Limite diário (${s.postsToday}/${MAX_DAY}). Aguardar ${fmtWait(w)}.`, waitMs: w };
+    return { ok: false, state: s, reason: `Limite diário (${s.postsToday}/${MAX_DAY}). Aguardar ${fmtWait(w)}.`, waitMs: w };
   }
   if (s.postsHour >= MAX_HOUR) {
     const n = new Date(now); n.setUTCMinutes(60, 0, 0);
     const w = n - now;
-    return { ok: false, reason: `Limite/hora (${s.postsHour}/${MAX_HOUR}). Aguardar ${fmtWait(w)}.`, waitMs: w };
+    return { ok: false, state: s, reason: `Limite/hora (${s.postsHour}/${MAX_HOUR}). Aguardar ${fmtWait(w)}.`, waitMs: w };
   }
   if (s.lastPostAt) {
     const el = now - s.lastPostAt, mg = MIN_GAP * 60000;
     if (el < mg) {
       const w = mg - el;
-      return { ok: false, reason: `Intervalo mínimo ${MIN_GAP}min. Aguardar ${fmtWait(w)}.`, waitMs: w };
+      return { ok: false, state: s, reason: `Intervalo mínimo ${MIN_GAP}min. Aguardar ${fmtWait(w)}.`, waitMs: w };
     }
   }
-  return { ok: true };
+  return { ok: true, state: s };
 }
 
-function recordPost(id, ok) {
-  const s = getState(id);
-  if (ok) { s.postsToday++; s.postsHour++; s.lastPostAt = Date.now(); }
+async function recordPost(store, id, state, success) {
+  if (!success) return;
+  state.postsToday++;
+  state.postsHour++;
+  state.lastPostAt = Date.now();
+  await saveState(store, id, state);
 }
 
 // ─── Polling do container de vídeo ───────────────────────────────────────────
@@ -163,6 +195,13 @@ export const handler = async (event) => {
   if (!accounts?.length || !media_url || !media_type || !post_type)
     return { statusCode: 400, headers, body: JSON.stringify({ error: "Campos obrigatórios ausentes" }) };
 
+  let store;
+  try {
+    store = getRLStore();
+  } catch (err) {
+    console.warn("[publish] Blobs não configurado, rate-limit desativado:", err.message);
+  }
+
   const delayMs = (parseInt(String(delay_seconds)) || 0) * 1000;
   const results = [];
 
@@ -170,17 +209,31 @@ export const handler = async (event) => {
     if (i > 0 && delayMs > 0) await sleep(delayMs);
     const account = accounts[i];
 
-    if (!skip_rate_limit) {
-      const check = canPublish(account.id);
+    let state = null;
+    if (!skip_rate_limit && store) {
+      const check = await canPublish(store, account.id);
       if (!check.ok) {
-        results.push({ account_id: account.id, username: account.username, success: false, rate_limited: true, error: check.reason, wait_ms: check.waitMs, wait_human: fmtWait(check.waitMs) });
+        results.push({
+          account_id:   account.id,
+          username:     account.username,
+          success:      false,
+          rate_limited: true,
+          error:        check.reason,
+          wait_ms:      check.waitMs,
+          wait_human:   fmtWait(check.waitMs),
+        });
         continue;
       }
+      state = check.state;
     }
 
     const caption = captions?.[account.id] ?? default_caption ?? "";
     const result  = await publishOne({ account, media_url, media_type, post_type, caption });
-    recordPost(account.id, result.success);
+
+    if (store && state) {
+      await recordPost(store, account.id, state, result.success);
+    }
+
     results.push({ account_id: account.id, username: account.username, ...result });
   }
 
