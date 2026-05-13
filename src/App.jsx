@@ -322,8 +322,30 @@ function SchedulerProvider({ addEntry, children }) {
   const removeItem = async (id)    => { await qApi.remove(id); setQueue((p) => p.filter((x) => x.id !== id)); };
   const clearQueue = async ()      => { await qApi.clear(); setQueue([]); };
 
+  // Cancela todos os pendentes sem deletar (podem ser reativados)
+  const cancelPending = async () => {
+    const all = await qApi.getAll();
+    const pending = all.filter((x) => x.status === 'pending');
+    for (const item of pending) {
+      await qApi.update({ ...item, status: 'cancelled' });
+    }
+    reload();
+    return pending.length;
+  };
+
+  // Reativa todos os cancelados
+  const resumeQueue = async () => {
+    const all = await qApi.getAll();
+    const cancelled = all.filter((x) => x.status === 'cancelled');
+    for (const item of cancelled) {
+      await qApi.update({ ...item, status: 'pending' });
+    }
+    reload();
+    return cancelled.length;
+  };
+
   return (
-    <SchedulerContext.Provider value={{ queue, addBatch, updateItem, removeItem, clearQueue, reload }}>
+    <SchedulerContext.Provider value={{ queue, addBatch, updateItem, removeItem, clearQueue, cancelPending, resumeQueue, reload }}>
       {children}
     </SchedulerContext.Provider>
   );

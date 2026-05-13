@@ -1,5 +1,7 @@
 // Sidebar.jsx
+import { useState } from "react";
 import { NavLink } from "react-router-dom";
+import { useScheduler } from "./App.jsx";
 
 const NAV = [
   { to: "/",            label: "Contas",      icon: "👤", desc: "Gerencie suas contas"   },
@@ -12,12 +14,40 @@ const NAV = [
 ];
 
 export default function Sidebar({ accounts, swStatus, oauthUrl, syncing, onConnectInstagram, oauthStatus }) {
+  const { queue, cancelPending, resumeQueue } = useScheduler();
+  const [busy,      setBusy]      = useState(false);
+  const [actionMsg, setActionMsg] = useState(null);
+
+  const pendingCount   = queue.filter((x) => x.status === "pending").length;
+  const cancelledCount = queue.filter((x) => x.status === "cancelled").length;
+  const hasPending     = pendingCount > 0;
+  const hasCancelled   = cancelledCount > 0;
+
   const swInfo = {
     active:      { color: "#22c55e", title: "Scheduler ativo" },
     error:       { color: "#ef4444", title: "Erro no scheduler" },
     unsupported: { color: "#f59e0b", title: "SW não suportado" },
     loading:     { color: "#666678", title: "Iniciando..." },
   }[swStatus] || { color: "#666678", title: "" };
+
+  const handlePause = async () => {
+    if (!hasPending) return;
+    if (!window.confirm(`Interromper ${pendingCount} post(s) pendente(s)? Eles ficam salvos e podem ser retomados.`)) return;
+    setBusy(true);
+    const n = await cancelPending();
+    setActionMsg(`⏸ ${n} post(s) pausado(s)`);
+    setBusy(false);
+    setTimeout(() => setActionMsg(null), 3000);
+  };
+
+  const handleResume = async () => {
+    if (!hasCancelled) return;
+    setBusy(true);
+    const n = await resumeQueue();
+    setActionMsg(`▶ ${n} post(s) retomado(s)`);
+    setBusy(false);
+    setTimeout(() => setActionMsg(null), 3000);
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -29,33 +59,25 @@ export default function Sidebar({ accounts, swStatus, oauthUrl, syncing, onConne
             width: 38, height: 38, borderRadius: 12,
             background: "linear-gradient(135deg, var(--accent), #9b4dfc)",
             display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 20, flexShrink: 0, boxShadow: "0 2px 16px rgba(124,92,252,0.45)",
+            fontSize: 20, flexShrink: 0,
           }}>📱</div>
           <div>
-            <div style={{ fontWeight: 800, fontSize: 14, letterSpacing: "-0.02em" }}>Insta Manager</div>
-            <div style={{ fontSize: 10, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5, marginTop: 1 }}>
-              <span style={{
-                width: 6, height: 6, borderRadius: "50%",
-                background: swInfo.color, display: "inline-block",
-                boxShadow: `0 0 6px ${swInfo.color}`,
-              }} title={swInfo.title} />
-              <span>Meta Graph API v21</span>
-              {syncing && <span style={{ color: "var(--accent-light)", animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span>}
+            <div style={{ fontWeight: 800, fontSize: 15, color: "var(--fg)" }}>Insta Manager</div>
+            <div style={{ fontSize: 10, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: swInfo.color, display: "inline-block" }} />
+              {swInfo.title || "Meta Graph API v21"}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Contador de contas — só o número, sem lista */}
+      {/* Contas */}
       {accounts.length > 0 && (
-        <NavLink to="/" end style={{ textDecoration: "none" }}>
+        <NavLink to="/" style={{ textDecoration: "none" }}>
           <div style={{
-            margin: "10px 10px 0",
-            padding: "8px 12px",
-            borderRadius: 10,
-            background: "rgba(124,92,252,0.07)",
-            border: "1px solid rgba(124,92,252,0.15)",
-            display: "flex", alignItems: "center", gap: 8,
+            margin: "10px 10px 0", padding: "10px 12px", borderRadius: 10,
+            background: "rgba(124,92,252,0.08)", border: "1px solid rgba(124,92,252,0.18)",
+            display: "flex", alignItems: "center", gap: 10,
           }}>
             <div style={{
               width: 28, height: 28, borderRadius: 8,
@@ -96,10 +118,67 @@ export default function Sidebar({ accounts, swStatus, oauthUrl, syncing, onConne
               fontSize: 17, lineHeight: 1, minWidth: 22, textAlign: "center",
               filter: "drop-shadow(0 0 4px rgba(124,92,252,0.3))",
             }}>{item.icon}</span>
-            <span>{item.label}</span>
+            <span style={{ flex: 1 }}>{item.label}</span>
+            {/* Badge de pendentes na Fila */}
+            {item.to === "/fila" && pendingCount > 0 && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10,
+                background: "rgba(56,189,248,0.15)", color: "var(--info)",
+                border: "1px solid rgba(56,189,248,0.3)",
+              }}>{pendingCount}</span>
+            )}
+            {item.to === "/fila" && cancelledCount > 0 && pendingCount === 0 && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10,
+                background: "rgba(245,158,11,0.15)", color: "var(--warning)",
+                border: "1px solid rgba(245,158,11,0.3)",
+              }}>⏸{cancelledCount}</span>
+            )}
           </NavLink>
         ))}
       </nav>
+
+      {/* ── Botão Pausar / Retomar fila ── */}
+      {(hasPending || hasCancelled) && (
+        <div style={{ padding: "0 10px 8px" }}>
+          {actionMsg && (
+            <div style={{
+              fontSize: 11, textAlign: "center", color: "var(--success)",
+              padding: "4px 0 6px", fontWeight: 600,
+            }}>{actionMsg}</div>
+          )}
+          {hasPending && (
+            <button
+              onClick={handlePause}
+              disabled={busy}
+              className="btn btn-ghost btn-sm"
+              style={{
+                width: "100%", fontSize: 12, marginBottom: hasCancelled ? 4 : 0,
+                borderColor: "rgba(245,158,11,0.4)", color: "var(--warning)",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              }}
+            >
+              {busy ? <span className="spinner" style={{ width: 10, height: 10, borderTopColor: "var(--warning)" }} /> : "⏸"}
+              Pausar fila ({pendingCount})
+            </button>
+          )}
+          {hasCancelled && (
+            <button
+              onClick={handleResume}
+              disabled={busy}
+              className="btn btn-ghost btn-sm"
+              style={{
+                width: "100%", fontSize: 12,
+                borderColor: "rgba(34,197,94,0.4)", color: "var(--success)",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              }}
+            >
+              {busy ? <span className="spinner" style={{ width: 10, height: 10, borderTopColor: "var(--success)" }} /> : "▶"}
+              Retomar ({cancelledCount})
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Conectar Instagram via popup */}
       <div style={{ padding: "12px 10px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 6 }}>
@@ -128,6 +207,7 @@ export default function Sidebar({ accounts, swStatus, oauthUrl, syncing, onConne
 
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .spinner { display: inline-block; border: 2px solid rgba(255,255,255,0.15); border-radius: 50%; animation: spin 0.8s linear infinite; }
       `}</style>
     </div>
   );
