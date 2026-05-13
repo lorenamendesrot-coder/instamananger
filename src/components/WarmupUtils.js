@@ -79,7 +79,6 @@ export function isNewAccount(acc) {
   return warmupDay(acc.connected_at || new Date().toISOString()) <= NEW_ACCOUNT_DAYS;
 }
 
-// Upload direto do browser para R2 via presigned URL — sem limite de tamanho
 
 export function addJitter(date, minRange, secRange) {
   const jitterMin = Math.floor(Math.random() * (minRange[1] - minRange[0] + 1)) + minRange[0];
@@ -95,6 +94,36 @@ export function timeToMs(dateBase, timeStr) {
   const d = new Date(dateBase);
   d.setHours(h, m, 0, 0);
   return d.getTime();
+}
+
+// ─── Gera slots por meta (quantidade em período) ──────────────────────────────
+// Ex: 10 reels em 1h → calcula intervalo ideal com jitter para caber tudo
+export function generateSlotsByTarget({ dayBase, count, periodHours, windowStart: ws, windowEnd: we }) {
+  const windowStart = timeToMs(dayBase, ws);
+  const windowEnd   = timeToMs(dayBase, we);
+  const windowMs    = windowEnd - windowStart;
+
+  // Período alvo em ms — não pode ultrapassar a janela disponível
+  const periodMs    = Math.min(periodHours * 3600000, windowMs);
+
+  if (count <= 0 || periodMs <= 0) return [];
+
+  // Intervalo base = período / (count - 1) ou período / count se só 1
+  const baseInterval = count > 1 ? periodMs / (count - 1) : periodMs;
+
+  // Jitter de ±20% do intervalo (mínimo 10s, máximo 5min)
+  const jitterAmp = Math.min(300000, Math.max(10000, baseInterval * 0.2));
+
+  const times = [];
+  for (let i = 0; i < count; i++) {
+    const base    = windowStart + i * baseInterval;
+    const jitter  = (Math.random() * 2 - 1) * jitterAmp;
+    const seconds = Math.floor(Math.random() * 59);
+    const t       = new Date(Math.min(Math.max(base + jitter, windowStart), windowEnd));
+    t.setSeconds(seconds);
+    times.push(t);
+  }
+  return times;
 }
 
 export function generateSlotTimes(dayBase, count, plan) {
@@ -133,6 +162,15 @@ export function buildWarmupQueue({ accounts, mediaByType, captions, captionMode,
   const slots = [];
   if (!accounts.length) return slots;
 
+  // Contador de sessão garante unicidade mesmo quando crypto.randomUUID()
+  // não está disponível (ambientes antigos) ou quando Date.now() não avança
+  // entre iterações síncronas — problema real com 50 contas × 30 slots.
+  let _seq = 0;
+  const uid = () =>
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${(++_seq).toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
   const startBase = new Date(startDateStr + "T00:00:00");
 
   // Dias base do preset + dias extras em loop (repetindo o Dia 3 de manutenção)
@@ -167,7 +205,16 @@ export function buildWarmupQueue({ accounts, mediaByType, captions, captionMode,
       if (!pool.length || !count) return;
 
       accounts.forEach((acc, accIdx) => {
-        const times = generateSlotTimes(dayBase, count, dayPlan);
+        // Modo target: quantidade em período definido
+        const times = dayPlan.targetMode && dayPlan.targetCount && dayPlan.targetPeriodHours
+          ? generateSlotsByTarget({
+              dayBase,
+              count:       dayPlan.targetCount,
+              periodHours: dayPlan.targetPeriodHours,
+              windowStart: dayPlan.windowStart,
+              windowEnd:   dayPlan.windowEnd,
+            })
+          : generateSlotTimes(dayBase, count, dayPlan);
         times.forEach((scheduledDate, k) => {
           const mediaIdx = distribution === "random"
             ? Math.floor(Math.random() * pool.length)
@@ -177,7 +224,7 @@ export function buildWarmupQueue({ accounts, mediaByType, captions, captionMode,
           const caption   = captions.length ? pickCaption(captions, captionMode, slotIdx) : "";
 
           daySlots.push({
-            id:            `wup-${acc.id}-${dayPlan.day}-${key}-${k}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            id:            `wup-${acc.id}-d${dayPlan.day}-${key}-${k}-${uid()}`,
             accountId:     acc.id,
             username:      acc.username,
             mediaUrl:      media.url,
