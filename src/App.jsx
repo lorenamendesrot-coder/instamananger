@@ -36,7 +36,12 @@ function HistoryProvider({ children }) {
 
   const reload = useCallback(async () => {
     const all = await dbGetAll("history");
-    all.sort((a, b) => b.id - a.id);
+    // id é string tipo "h-1778645958962-0" — ordenar por created_at ou extrair timestamp
+    all.sort((a, b) => {
+      const ta = a.created_at ? new Date(a.created_at).getTime() : parseInt((a.id || "0").split("-")[1] || "0", 10);
+      const tb = b.created_at ? new Date(b.created_at).getTime() : parseInt((b.id || "0").split("-")[1] || "0", 10);
+      return tb - ta;
+    });
     setTotalCount(all.length);
     setHistory(all.slice(0, 500));
   }, []);
