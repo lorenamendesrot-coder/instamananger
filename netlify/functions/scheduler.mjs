@@ -16,8 +16,8 @@ const BLOB_KEY = "queue-data";
 
 // ─── Lock otimista ────────────────────────────────────────────────────────────
 
-const MAX_RETRIES = 5;
-const BASE_DELAY  = 80;
+const MAX_RETRIES = 10;
+const BASE_DELAY  = 150;
 
 async function readWithEtag(store) {
   try {
@@ -314,17 +314,20 @@ export default async function handler() {
   const queue = await queueReadAll(store);
   const now   = Date.now();
 
-  // Reseta itens "running" travados por mais de 3 minutos
-  const STUCK_MS   = 3 * 60 * 1000;
+  // Reseta itens "running" travados por mais de 8 minutos.
+  // Aumentado de 3 → 8 min: com 50 contas, callPublishAllBatches faz até
+  // 10 chamadas HTTP sequenciais (~2-3s cada) e pode levar até 7 min legítimos.
+  const STUCK_MS   = 8 * 60 * 1000;
   const stuckItems = queue.filter(
     (x) => x.status === "running" && x.startedAt && now - new Date(x.startedAt).getTime() > STUCK_MS
   );
+  // Stuck reset ainda é sequencial — são raros e não precisam de concorrência
   for (const item of stuckItems) {
     console.warn(`[scheduler] resetando item travado ${item.id}`);
     await queueUpdate(store, { ...item, status: "pending", scheduledAt: now + 5000 });
   }
 
-  const dueNormal = queue.filter((x) => !x.type        && x.status === "pending" && x.scheduledAt <= now);
+  const dueNormal = queue.filter((x) => !x.type && x.status === "pending" && x.scheduledAt <= now);
   const dueFinish = queue.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now);
 
   console.log(`[scheduler] ${dueNormal.length} posts + ${dueFinish.length} video_finish vencidos`);
@@ -335,14 +338,42 @@ export default async function handler() {
     });
   }
 
-  for (const vf   of dueFinish) await processVideoFinish(store, { ...vf, startedAt: new Date().toISOString() });
-  for (const item of dueNormal) await processItem(store,        { ...item, startedAt: new Date().toISOString() });
+  // ── Concorrência limitada ────────────────────────────────────────────────
+  // Processa até N items em paralelo em vez de sequencial puro.
+  // video_finish são leves (1 fetch) → limite 5.
+  // Posts normais são pesados (N batches × M contas) → limite 3.
+  // Cada lote aguarda todos terminarem antes do próximo — garante que o
+  // tempo total da função cabe dentro do timeout da Netlify (26s agendadas).
+  const CONCURRENT_NORMAL = 3;
+  const CONCURRENT_FINISH = 5;
+
+  await runConcurrent(
+    dueFinish,
+    (vf) => processVideoFinish(store, { ...vf, startedAt: new Date().toISOString() }),
+    CONCURRENT_FINISH,
+  );
+  await runConcurrent(
+    dueNormal,
+    (item) => processItem(store, { ...item, startedAt: new Date().toISOString() }),
+    CONCURRENT_NORMAL,
+  );
 
   const total = dueNormal.length + dueFinish.length;
   console.log(`[scheduler] concluído — ${total} item(s) processados`);
   return new Response(JSON.stringify({ ok: true, processed: total }), {
     status: 200, headers: { "Content-Type": "application/json" },
   });
+}
+
+// ─── Concorrência limitada ────────────────────────────────────────────────────
+// Executa fn() em lotes de até `limit` promises simultâneas.
+// Aguarda cada lote terminar antes do próximo — sem estourar memória nem
+// gerar contention excessivo no lock do Blob com muitas escritas paralelas.
+async function runConcurrent(items, fn, limit) {
+  for (let i = 0; i < items.length; i += limit) {
+    const batch = items.slice(i, i + limit);
+    await Promise.allSettled(batch.map(fn));
+  }
 }
 
 export const config = {
