@@ -18,9 +18,9 @@ export const handler = async (event) => {
     return respondWith({ error: "Código de autorização ausente" }, isPopup);
   }
 
-  const APP_ID       = process.env.META_APP_ID;
-  const APP_SECRET   = process.env.META_APP_SECRET;
-  const REDIRECT_URI = process.env.META_REDIRECT_URI;
+  const APP_ID       = process.env.META_FB_APP_ID     || process.env.META_APP_ID;
+  const APP_SECRET   = process.env.META_FB_APP_SECRET  || process.env.META_APP_SECRET;
+  const REDIRECT_URI = process.env.META_FB_REDIRECT_URI || process.env.META_REDIRECT_URI;
 
   try {
     // ── 1. Trocar code por token de curta duração ──────────────────────────
