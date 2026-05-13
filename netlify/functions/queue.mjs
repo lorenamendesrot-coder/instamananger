@@ -20,14 +20,21 @@ function getQueueStore() {
   return getStore({ name: STORE_NAME, siteID, token, consistency: "strong" });
 }
 
-const CORS = {
-  "Access-Control-Allow-Origin":  process.env.ALLOWED_ORIGIN || "*",
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Content-Type":                 "application/json",
-};
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "";
 
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: CORS });
+function corsHeaders(req) {
+  const origin = (req?.headers?.get ? req.headers.get("origin") : req?.headers?.origin) || "";
+  const allow  = ALLOWED_ORIGIN && origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : (ALLOWED_ORIGIN ? "" : "*");
+  return {
+    "Access-Control-Allow-Origin":  allow,
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Content-Type":                 "application/json",
+    ...(allow && allow !== "*" ? { "Vary": "Origin" } : {}),
+  };
+}
+
+function json(data, status = 200, req = null) {
+  return new Response(JSON.stringify(data), { status, headers: corsHeaders(req) });
 }
 
 async function readAll(store) {
@@ -44,7 +51,7 @@ async function writeAll(store, items) {
 }
 
 export default async function handler(req) {
-  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(req) });
 
   try {
     const store = getQueueStore();
@@ -52,7 +59,7 @@ export default async function handler(req) {
     // GET — retorna todos os itens
     if (req.method === "GET") {
       const items = await readAll(store);
-      return json(items);
+      return json(items, 200, req);
     }
 
     // POST — addBatch: insere ou substitui itens pelo id
@@ -69,13 +76,13 @@ export default async function handler(req) {
       }
 
       await writeAll(store, queue);
-      return json({ saved: news.length, total: queue.length });
+      return json({ saved: news.length, total: queue.length }, 200, req);
     }
 
     // PUT — updateItem: atualiza um item pelo id
     if (req.method === "PUT") {
       const item  = await req.json();
-      if (!item?.id) return json({ error: "id obrigatório" }, 400);
+      if (!item?.id) return json({ error: "id obrigatório" }, 400, req);
 
       const queue = await readAll(store);
       const idx   = queue.findIndex((x) => x.id === item.id);
@@ -83,7 +90,7 @@ export default async function handler(req) {
       else queue.push(item);
 
       await writeAll(store, queue);
-      return json(item);
+      return json(item, 200, req);
     }
 
     // DELETE — remove item ou limpa tudo
@@ -95,17 +102,17 @@ export default async function handler(req) {
         const queue   = await readAll(store);
         const updated = queue.filter((x) => String(x.id) !== String(id));
         await writeAll(store, updated);
-        return json({ deleted: id, remaining: updated.length });
+        return json({ deleted: id, remaining: updated.length }, 200, req);
       } else {
         await writeAll(store, []);
-        return json({ cleared: true });
+        return json({ cleared: true }, 200, req);
       }
     }
 
-    return json({ error: "Método não permitido" }, 405);
+    return json({ error: "Método não permitido" }, 405, req);
 
   } catch (err) {
     console.error("[queue.mjs]", err.message);
-    return json({ error: err.message }, 500);
+    return json({ error: err.message }, 500, req);
   }
 }
