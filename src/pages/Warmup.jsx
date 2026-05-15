@@ -10,7 +10,6 @@ import { useAccounts } from "../useAccounts.js";
 import { useWarmupFiles, useScheduler } from "../App.jsx";
 import { dbPut, dbGetAll } from "../useDB.js";
 import BulkCaptions, { pickCaption } from "../components/BulkCaptions.jsx";
-import ReelChecklist from "../components/ReelChecklist.jsx";
 
 // ─── Componente Principal ─────────────────────────────────────────────────────
 
@@ -420,7 +419,6 @@ export default function Warmup() {
             </div>
           )}
 
-          {reelFiles.length > 0 && <ReelChecklist reels={reelFiles} sanitizedIds={[]} onRemove={(id) => removeFile("reels", id)} />}
 
           {stats.totalDone > 0 && (
             <div style={{

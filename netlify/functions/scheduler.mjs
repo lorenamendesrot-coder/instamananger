@@ -277,10 +277,14 @@ async function processItem(store, item) {
 
     // ── Finaliza item original ────────────────────────────────────────────
     if (item.loop) {
+      // Intervalo: 1h + jitter aleatório de ±3 min para evitar shadowban
+      // (padrão fixo de horário é detectado pelo algoritmo do Instagram)
+      const HOUR_MS  = 3600 * 1000;
+      const JITTER   = Math.floor(Math.random() * 360 - 180) * 1000; // ±3 min em ms
       await queueUpdate(store, {
         ...item,
         status:      "pending",
-        scheduledAt: item.scheduledAt + 86400000,
+        scheduledAt: item.scheduledAt + HOUR_MS + JITTER,
         runCount:    (item.runCount || 0) + 1,
       });
     } else {
