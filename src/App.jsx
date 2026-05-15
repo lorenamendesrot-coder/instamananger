@@ -135,6 +135,42 @@ function SchedulerProvider({ addEntry, children }) {
     setQueue(all);
     // Espelha no IndexedDB local para o SW
     try { await dbClear("queue"); await dbPutMany("queue", all); } catch {}
+
+    // ── Sincroniza histórico de itens concluídos pelo scheduler Netlify ──────
+    // Quando o cron serverless executa um post, ele marca o item como "done"
+    // no Blob mas nunca salva no IDB local — o histórico fica vazio.
+    // Aqui detectamos itens "done" sem historyId (concluídos pelo servidor)
+    // e criamos o registro de histórico local para que apareçam na UI.
+    try {
+      const doneSemHistoria = all.filter(
+        (x) => !x.type && x.status === "done" && !x._historySynced
+      );
+      for (const item of doneSemHistoria) {
+        const historyId = `h-srv-${item.id}`;
+        const jaExiste  = await dbGet("history", historyId).catch(() => null);
+        if (!jaExiste) {
+          await dbPut("history", {
+            id:              historyId,
+            post_type:       item.postType,
+            media_url:       item.mediaUrl || (item.mediaUrls?.[0] ?? ""),
+            media_type:      item.mediaType,
+            default_caption: item.caption || "",
+            results:         item.results  || [],
+            pending_accounts: [],
+            created_at:      item.completedAt || new Date().toISOString(),
+            from_scheduler:  true,
+            source:          item.warmup ? "warmup" : "schedule",
+          });
+        }
+        // Marca no Blob para não reprocessar na próxima chamada
+        await qApi.update({ ...item, _historySynced: true }).catch(() => {});
+      }
+      if (doneSemHistoria.length > 0) {
+        window.dispatchEvent(new CustomEvent("sw:queue-update"));
+      }
+    } catch (e) {
+      console.warn("[sync-history]", e);
+    }
   }, []);
 
   useEffect(() => {
