@@ -75,11 +75,6 @@ function sortEntries(entries, sortBy) {
   return copy;
 }
 
-const BLOCKED_HOSTS = ["catbox.moe", "litter.catbox.moe", "files.catbox.moe"];
-function isBlockedUrl(url = "") {
-  return BLOCKED_HOSTS.some((h) => url.includes(h));
-}
-
 // ─── HistoryCard ──────────────────────────────────────────────────────────────
 function HistoryCard({ entry, isExpanded, onToggle }) {
   const successCount  = (entry.results || []).filter((r) => r.success).length;
@@ -95,8 +90,6 @@ function HistoryCard({ entry, isExpanded, onToggle }) {
   const allBad = successCount === 0 && pendingCount === 0 && finishedCount > 0;
   // Se só há pendentes (totalAcc > 0 mas finishedCount === 0) → badge warning com ⏳
   const onlyPending = pendingCount > 0 && finishedCount === 0;
-
-  const urlBlocked = isBlockedUrl(entry.media_url);
 
   return (
     <div className="card card-hover" style={{ cursor: "pointer" }} onClick={onToggle}>
@@ -161,11 +154,6 @@ function HistoryCard({ entry, isExpanded, onToggle }) {
               <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Detalhes</div>
               <div style={{ fontSize: 12, color: "var(--text2)", display: "flex", flexDirection: "column", gap: 5 }}>
                 <div>📎 URL: <a href={entry.media_url} target="_blank" rel="noreferrer" style={{ color: "var(--accent3)", textDecoration: "underline", fontSize: 11 }} onClick={(e) => e.stopPropagation()}>{entry.media_url}</a></div>
-                {urlBlocked && (
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 6, padding: "7px 10px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 7, color: "var(--danger)", fontSize: 11, lineHeight: 1.5 }}>
-                    ⚠️ <span>Este host (<strong>catbox.moe</strong>) é bloqueado pela Meta e pode causar falha na publicação. Use Cloudinary, Bunny CDN, Dropbox (<code>?dl=1</code>) ou outro CDN público aceito.</span>
-                  </div>
-                )}
                 <div>📁 Tipo: {entry.media_type} · {entry.post_type}</div>
                 {entry.delay_seconds > 0 && <div>⏱ Delay: {entry.delay_seconds}s entre contas</div>}
               </div>
@@ -173,8 +161,9 @@ function HistoryCard({ entry, isExpanded, onToggle }) {
                 <div style={{ marginTop: 10 }}>
                   <div style={{ fontSize: 11, color: "var(--danger)", marginBottom: 5, fontWeight: 600 }}>Erros:</div>
                   {(entry.results || []).filter((r) => r.error).map((r, i) => (
-                    <div key={i} style={{ fontSize: 11, color: "var(--danger)", padding: "4px 8px", background: "rgba(239,68,68,0.06)", borderRadius: 6, marginBottom: 4 }}>
-                      @{r.username}: {r.error}
+                    <div key={i} style={{ fontSize: 11, color: "var(--danger)", padding: "6px 10px", background: "rgba(239,68,68,0.06)", borderRadius: 6, marginBottom: 4, lineHeight: 1.5 }}>
+                      <div style={{ fontWeight: 600, marginBottom: 2 }}>@{r.username}</div>
+                      <div style={{ color: "var(--text2)", wordBreak: "break-word" }}>{r.error}{r.errorCode ? ` (código ${r.errorCode})` : ""}</div>
                     </div>
                   ))}
                 </div>
