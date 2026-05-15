@@ -18,7 +18,7 @@ import { useServiceWorker } from "./useServiceWorker.js";
 import { useTokenCheck }   from "./useTokenCheck.js";
 import { useOAuthUrl }     from "./useOAuthUrl.js";
 import { useOAuthPopup }  from "./useOAuthPopup.js";
-import { dbGetAll, dbPut, dbPutMany, dbDelete, dbClear } from "./useDB.js";
+import { dbGetAll, dbGet, dbPut, dbPutMany, dbDelete, dbClear } from "./useDB.js";
 import Sidebar from "./Sidebar.jsx";
 import Toast   from "./Toast.jsx";
 import MobileBottomNav from "./MobileBottomNav.jsx";
