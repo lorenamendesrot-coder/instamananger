@@ -192,6 +192,8 @@ async function processItem(store, item) {
   try {
     const urlsToPost = item.mediaUrls || [item.mediaUrl];
 
+    const allFinishedResults = []; // acumula resultados de todas as mídias para salvar no done
+
     for (let mi = 0; mi < urlsToPost.length; mi++) {
       const mediaUrl = urlsToPost[mi];
       if (mi > 0) await new Promise((r) => setTimeout(r, 3000));
@@ -262,6 +264,9 @@ async function processItem(store, item) {
         }
       }
 
+      // Acumula resultados finalizados para salvar no histórico
+      allFinishedResults.push(...succeeded, ...failed);
+
       console.log(
         `[scheduler] item ${item.id} — ` +
         `${succeeded.length} ok, ${pendingVideos.length} vídeos pendentes, ` +
@@ -279,7 +284,14 @@ async function processItem(store, item) {
         runCount:    (item.runCount || 0) + 1,
       });
     } else {
-      await queueUpdate(store, { ...item, status: "done", finishedAt: new Date().toISOString() });
+      // Salva results e completedAt para que o browser sincronize o histórico local
+      await queueUpdate(store, {
+        ...item,
+        status:      "done",
+        results:     allFinishedResults,
+        completedAt: new Date().toISOString(),
+        finishedAt:  new Date().toISOString(),
+      });
     }
 
   } catch (err) {
