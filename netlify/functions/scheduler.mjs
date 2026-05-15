@@ -307,7 +307,15 @@ async function processItem(store, item) {
 }
 
 // ─── Handler principal ────────────────────────────────────────────────────────
-export default async function handler() {
+export default async function handler(request) {
+  // Ping de detecção: o frontend faz GET para saber se o cron está ativo.
+  if (request && request.method === "GET") {
+    return new Response(JSON.stringify({ ok: true, cron: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   console.log("[scheduler] tick às", new Date().toISOString());
 
   if (!SITE_URL) {
