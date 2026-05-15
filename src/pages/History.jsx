@@ -80,98 +80,103 @@ function HistoryCard({ entry, isExpanded, onToggle }) {
   const successCount  = (entry.results || []).filter((r) => r.success).length;
   const finishedCount = (entry.results || []).length;
   const pendingCount  = (entry.pending_accounts || []).length;
-  // totalAcc = contas que já terminaram + contas ainda pendentes
   const totalAcc      = finishedCount + pendingCount;
+  const onlyPending   = pendingCount > 0 && finishedCount === 0;
 
-  const src = SOURCE_BADGE[entry.source]
-    || (entry.from_scheduler ? SOURCE_BADGE.schedule : SOURCE_BADGE.new_post);
-
+  const src    = SOURCE_BADGE[entry.source] || (entry.from_scheduler ? SOURCE_BADGE.schedule : SOURCE_BADGE.new_post);
   const allOk  = successCount === finishedCount && pendingCount === 0 && finishedCount > 0;
   const allBad = successCount === 0 && pendingCount === 0 && finishedCount > 0;
-  // Se só há pendentes (totalAcc > 0 mas finishedCount === 0) → badge warning com ⏳
-  const onlyPending = pendingCount > 0 && finishedCount === 0;
+
+  // Contas a mostrar: pending_accounts + results + fallback para entry.accounts
+  const pendingAccs  = entry.pending_accounts || [];
+  const resultAccs   = entry.results || [];
+  // Se não há nenhuma conta ainda, usa entry.accounts como fallback (todos pendentes)
+  const fallbackAccs = (pendingAccs.length === 0 && resultAccs.length === 0)
+    ? (entry.accounts || [])
+    : [];
 
   return (
-    <div className="card card-hover" style={{ cursor: "pointer" }} onClick={onToggle}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
+    <div
+      className="card card-hover"
+      style={{ cursor: "pointer", padding: "8px 12px" }}
+      onClick={onToggle}
+    >
+      {/* ── Linha principal (sempre visível) ── */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
 
-        {/* Thumb */}
-        <div style={{ width: 52, height: 52, borderRadius: 8, overflow: "hidden", background: "var(--bg3)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--border)" }}>
-          {entry.media_type === "IMAGE" ? (
-            <img src={entry.media_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              onError={(e) => { e.target.style.display = "none"; e.target.parentElement.innerHTML = '<span style="font-size:20px">🖼</span>'; }} />
-          ) : <span style={{ fontSize: 20 }}>{TYPE_ICON[entry.post_type] || "📌"}</span>}
+        {/* Ícone do tipo */}
+        <span style={{ fontSize: 16, flexShrink: 0 }}>{TYPE_ICON[entry.post_type] || "📌"}</span>
+
+        {/* Badge publicado */}
+        <span className={`badge ${allOk ? "badge-success" : allBad ? "badge-danger" : "badge-warning"}`} style={{ fontSize: 11 }}>
+          {pendingCount > 0 && "⏳ "}
+          {onlyPending ? `0/${pendingCount + fallbackAccs.length}` : `${successCount}/${totalAcc}`} pub.
+        </span>
+
+        {/* Badge origem */}
+        <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, fontWeight: 600, background: src.bg, border: `1px solid ${src.border}`, color: src.color, flexShrink: 0 }}>
+          {src.label}
+        </span>
+
+        {/* Badge tipo */}
+        <span className="badge badge-gray" style={{ fontSize: 10, flexShrink: 0 }}>
+          {TYPE_ICON[entry.post_type]} {TYPE_LABEL[entry.post_type] || entry.post_type}
+        </span>
+
+        {/* Usernames inline */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 3, flex: 1, minWidth: 0 }}>
+          {fallbackAccs.map((a, i) => (
+            <span key={`fb-${i}`} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 20, background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", color: "var(--info)", fontWeight: 500 }}>
+              ⏳ @{a.username}
+            </span>
+          ))}
+          {pendingAccs.map((a, i) => (
+            <span key={`p-${i}`} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 20, background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", color: "var(--info)", fontWeight: 500 }}>
+              ⏳ @{a.username}
+            </span>
+          ))}
+          {resultAccs.map((r, i) => (
+            <span key={`r-${i}`} title={r.error || ""} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 20, background: r.success ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)", border: `1px solid ${r.success ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)"}`, color: r.success ? "var(--success)" : "var(--danger)", fontWeight: 500 }}>
+              {r.success ? "✓" : "✗"} @{r.username}
+            </span>
+          ))}
         </div>
 
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Row 1: badges + data */}
-          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", marginBottom: 5 }}>
-            <span className={`badge ${allOk ? "badge-success" : allBad ? "badge-danger" : "badge-warning"}`}>
-              {pendingCount > 0 && <span style={{ marginRight: 4 }}>⏳</span>}
-              {onlyPending
-                ? `0/${pendingCount} publicado(s) — aguardando...`
-                : `${successCount}/${totalAcc} publicado(s)`}
-            </span>
-
-            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 600, background: src.bg, border: `1px solid ${src.border}`, color: src.color }}>
-              {src.label}
-            </span>
-
-            <span className="badge badge-gray" style={{ fontSize: 10 }}>
-              {TYPE_ICON[entry.post_type]} {TYPE_LABEL[entry.post_type] || entry.post_type}
-            </span>
-
-            <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: "auto" }}>
-              {new Date(entry.created_at).toLocaleString("pt-BR")}
-            </span>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>{isExpanded ? "▲" : "▼"}</span>
-          </div>
-
-          {/* Legenda */}
-          {entry.default_caption && (
-            <div style={{ fontSize: 12, color: "var(--text2)", marginBottom: 8, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: isExpanded ? 999 : 2, WebkitBoxOrient: "vertical" }}>
-              {entry.default_caption}
-            </div>
-          )}
-
-          {/* Pills de contas */}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {(entry.pending_accounts || []).map((a, i) => (
-              <span key={`p-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 500, background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", color: "var(--info)" }}>
-                ⏳ @{a.username}
-              </span>
-            ))}
-            {(entry.results || []).map((r, i) => (
-              <span key={i} title={r.error || ""} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 500, background: r.success ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)", border: `1px solid ${r.success ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)"}`, color: r.success ? "var(--success)" : "var(--danger)" }}>
-                {r.success ? "✓" : "✗"} @{r.username}
-              </span>
-            ))}
-          </div>
-
-          {/* Detalhes expandidos */}
-          {isExpanded && (
-            <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
-              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Detalhes</div>
-              <div style={{ fontSize: 12, color: "var(--text2)", display: "flex", flexDirection: "column", gap: 5 }}>
-                <div>📎 URL: <a href={entry.media_url} target="_blank" rel="noreferrer" style={{ color: "var(--accent3)", textDecoration: "underline", fontSize: 11 }} onClick={(e) => e.stopPropagation()}>{entry.media_url}</a></div>
-                <div>📁 Tipo: {entry.media_type} · {entry.post_type}</div>
-                {entry.delay_seconds > 0 && <div>⏱ Delay: {entry.delay_seconds}s entre contas</div>}
-              </div>
-              {(entry.results || []).some((r) => r.error) && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 11, color: "var(--danger)", marginBottom: 5, fontWeight: 600 }}>Erros:</div>
-                  {(entry.results || []).filter((r) => r.error).map((r, i) => (
-                    <div key={i} style={{ fontSize: 11, color: "var(--danger)", padding: "6px 10px", background: "rgba(239,68,68,0.06)", borderRadius: 6, marginBottom: 4, lineHeight: 1.5 }}>
-                      <div style={{ fontWeight: 600, marginBottom: 2 }}>@{r.username}</div>
-                      <div style={{ color: "var(--text2)", wordBreak: "break-word" }}>{r.error}{r.errorCode ? ` (código ${r.errorCode})` : ""}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        {/* Data + chevron */}
+        <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0, marginLeft: "auto" }}>
+          {new Date(entry.created_at).toLocaleString("pt-BR")}
+        </span>
+        <span style={{ fontSize: 11, color: "var(--muted)", flexShrink: 0 }}>{isExpanded ? "▲" : "▼"}</span>
       </div>
+
+      {/* ── Legenda (só se expandido) ── */}
+      {isExpanded && entry.default_caption && (
+        <div style={{ fontSize: 11, color: "var(--text2)", marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
+          {entry.default_caption}
+        </div>
+      )}
+
+      {/* ── Detalhes expandidos ── */}
+      {isExpanded && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
+          <div style={{ fontSize: 11, color: "var(--text2)", display: "flex", flexDirection: "column", gap: 4 }}>
+            <div>📎 <a href={entry.media_url} target="_blank" rel="noreferrer" style={{ color: "var(--accent3)", textDecoration: "underline", fontSize: 11 }} onClick={(e) => e.stopPropagation()}>{entry.media_url}</a></div>
+            <div>📁 {entry.media_type} · {entry.post_type}</div>
+            {entry.delay_seconds > 0 && <div>⏱ Delay: {entry.delay_seconds}s</div>}
+          </div>
+          {(entry.results || []).some((r) => r.error) && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 11, color: "var(--danger)", marginBottom: 4, fontWeight: 600 }}>Erros:</div>
+              {(entry.results || []).filter((r) => r.error).map((r, i) => (
+                <div key={i} style={{ fontSize: 11, color: "var(--danger)", padding: "5px 8px", background: "rgba(239,68,68,0.06)", borderRadius: 6, marginBottom: 3, lineHeight: 1.5 }}>
+                  <span style={{ fontWeight: 600 }}>@{r.username}:</span>{" "}
+                  <span style={{ color: "var(--text2)", wordBreak: "break-word" }}>{r.error}{r.errorCode ? ` (código ${r.errorCode})` : ""}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
