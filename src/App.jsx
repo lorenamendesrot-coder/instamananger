@@ -119,6 +119,16 @@ function SchedulerProvider({ addEntry, children }) {
       for (const item of doneSemHistoria) {
         const historyId = `h-srv-${item.id}`;
         const jaExiste  = await dbGet("history", historyId).catch(() => null);
+
+        // Busca video_finish pendentes vinculados a este item para mostrar contas aguardando
+        const videoFinishPendentes = all.filter(
+          (x) => x.type === "video_finish" && x.status === "pending" && x.historyId === historyId
+        );
+        const pendingAccounts = videoFinishPendentes.map((vf) => ({
+          account_id: vf.account_id,
+          username:   vf.username || vf.account_id,
+        }));
+
         if (!jaExiste) {
           await dbPut("history", {
             id:               historyId,
@@ -127,11 +137,14 @@ function SchedulerProvider({ addEntry, children }) {
             media_type:       item.mediaType,
             default_caption:  item.caption || "",
             results:          item.results  || [],
-            pending_accounts: [],
+            pending_accounts: pendingAccounts,
             created_at:       item.completedAt || new Date().toISOString(),
             from_scheduler:   true,
             source:           item.warmup ? "warmup" : "schedule",
           });
+        } else if (pendingAccounts.length !== (jaExiste.pending_accounts || []).length) {
+          // Atualiza pending_accounts se a lista mudou (contas finalizando aos poucos)
+          await dbPut("history", { ...jaExiste, pending_accounts: pendingAccounts });
         }
         await qApi.update({ ...item, _historySynced: true }).catch(() => {});
       }
