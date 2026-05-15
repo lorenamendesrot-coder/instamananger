@@ -338,17 +338,7 @@ export default function Accounts() {
     setRefreshingAll(false);
   }, [accounts, refreshingAll, runBatch]);
 
-  // ── Fetch automático: 1x ao entrar + a cada 30 min em segundo plano ─────
-  const fetchedRef = useRef(false);
-  useEffect(() => {
-    if (loading || accounts.length === 0) return;
-    if (!fetchedRef.current) {
-      fetchedRef.current = true;
-      runBatch(accounts);
-    }
-    const timer = setInterval(() => runBatch(accounts), 30 * 60 * 1000);
-    return () => clearInterval(timer);
-  }, [accounts, loading]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Fetch manual apenas — use o botão "Atualizar tudo" para buscar insights ─
 
   const openDetail = (acc) => {
     setDetailAcc(acc);

@@ -144,8 +144,7 @@ function AccountInsights({ account, date }) {
     }
   }, [account.id, account.token, date]);
 
-  // Auto-carrega quando o componente aparece
-  useEffect(() => { load(); }, [load]);
+  // Carrega somente quando o usuário clicar em "Atualizar"
 
   const totalEngagement = state.reels.reduce((s, r) => s + (r.insights?.engagement || 0), 0);
   const totalPlays      = state.reels.reduce((s, r) => s + (r.insights?.plays || 0), 0);
