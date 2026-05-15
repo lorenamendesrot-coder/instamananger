@@ -301,6 +301,7 @@ function SchedulerProvider({ addEntry, children }) {
               id: historyId, post_type: item.postType, media_url: mediaUrl, media_type: item.mediaType,
               default_caption: item.caption, results: finishedResults,
               pending_accounts: pendingResults.map((r) => ({ account_id: r.account_id, username: r.username || r.account_id })),
+              accounts: item.accounts || [],
               created_at: new Date().toISOString(), from_scheduler: true,
               source: item.warmup ? "warmup" : "schedule",
             });
