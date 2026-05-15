@@ -1,14 +1,23 @@
 import { Routes, Route, useLocation } from "react-router-dom";
+import { useCdnMonitor, isCdnError } from "./useCdnMonitor.js";
 import { useEffect, useState, useCallback, useRef, createContext, useContext } from "react";
 
+// Páginas
 import Accounts from "./pages/Accounts.jsx";
-import Queue    from "./pages/Queue.jsx";
-import History  from "./pages/History.jsx";
+import Queue     from "./pages/Queue.jsx";
+import History   from "./pages/History.jsx";
+import Warmup      from "./pages/Warmup.jsx";
+import Protection  from "./pages/Protection.jsx";
+import Logs        from "./pages/Logs.jsx";
+import Insights    from "./pages/Insights.jsx";
 
-import { useAccounts }  from "./useAccounts.js";
-import { useToast }     from "./useToast.js";
-import { useOAuthUrl }  from "./useOAuthUrl.js";
-import { useOAuthPopup } from "./useOAuthPopup.js";
+// Hooks e componentes isolados
+import { useAccounts }     from "./useAccounts.js";
+import { useToast }        from "./useToast.js";
+import { useServiceWorker } from "./useServiceWorker.js";
+import { useTokenCheck }   from "./useTokenCheck.js";
+import { useOAuthUrl }     from "./useOAuthUrl.js";
+import { useOAuthPopup }  from "./useOAuthPopup.js";
 import { dbGetAll, dbGet, dbPut, dbPutMany, dbDelete, dbClear } from "./useDB.js";
 import Sidebar from "./Sidebar.jsx";
 import Toast   from "./Toast.jsx";
@@ -16,16 +25,18 @@ import MobileBottomNav from "./MobileBottomNav.jsx";
 
 export { useAccounts };
 
-// ─── History Context ──────────────────────────────────────────────────────────
+// ─── History Context — instância única compartilhada ─────────────────────────
 const HistoryContext = createContext(null);
+
 export const useHistory = () => useContext(HistoryContext);
 
 function HistoryProvider({ children }) {
-  const [history, setHistory]     = useState([]);
+  const [history, setHistory]       = useState([]);
   const [totalCount, setTotalCount] = useState(0);
 
   const reload = useCallback(async () => {
     const all = await dbGetAll("history");
+    // id é string tipo "h-1778645958962-0" — ordenar por created_at ou extrair timestamp
     all.sort((a, b) => {
       const ta = a.created_at ? new Date(a.created_at).getTime() : parseInt((a.id || "0").split("-")[1] || "0", 10);
       const tb = b.created_at ? new Date(b.created_at).getTime() : parseInt((b.id || "0").split("-")[1] || "0", 10);
@@ -37,6 +48,13 @@ function HistoryProvider({ children }) {
 
   useEffect(() => { reload(); }, [reload]);
 
+  // Escuta evento do SW para recarregar
+  useEffect(() => {
+    const h = () => reload();
+    window.addEventListener("sw:queue-update", h);
+    return () => window.removeEventListener("sw:queue-update", h);
+  }, [reload]);
+
   const addEntry    = useCallback(async (entry) => { await dbPut("history", entry); reload(); }, [reload]);
   const clearHistory = useCallback(async () => { await dbClear("history"); setHistory([]); setTotalCount(0); }, []);
 
@@ -47,51 +65,112 @@ function HistoryProvider({ children }) {
   );
 }
 
-// ─── Scheduler Context ────────────────────────────────────────────────────────
+// ─── WarmupContext — persiste arquivos de upload entre trocas de aba ──────────
+const WarmupContext = createContext(null);
+export const useWarmupFiles = () => useContext(WarmupContext);
+
+function WarmupProvider({ children }) {
+  const [files, setFiles] = useState({ reels: [], feed: [], stories: [] });
+
+  const addFiles = useCallback((typeId, newFiles) => {
+    const entries = Array.from(newFiles).map((file) => ({
+      id: `${typeId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      file, name: file.name, size: file.size,
+      status: "idle", progress: 0, url: "", error: "", typeId,
+    }));
+    setFiles((prev) => ({ ...prev, [typeId]: [...(prev[typeId] || []), ...entries] }));
+  }, []);
+
+  const removeFile = useCallback((typeId, fileId) => {
+    setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].filter((f) => f.id !== fileId) }));
+  }, []);
+
+  const updateFile = useCallback((typeId, fileId, patch) => {
+    setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === fileId ? { ...f, ...patch } : f) }));
+  }, []);
+
+  const clearFiles = useCallback((typeId) => {
+    if (typeId) setFiles((prev) => ({ ...prev, [typeId]: [] }));
+    else setFiles({ reels: [], feed: [], stories: [] });
+  }, []);
+
+  return (
+    <WarmupContext.Provider value={{ files, setFiles, addFiles, removeFile, updateFile, clearFiles }}>
+      {children}
+    </WarmupContext.Provider>
+  );
+}
 const SchedulerContext = createContext(null);
 export const useScheduler = () => useContext(SchedulerContext);
 
+// Helpers para a fila no Blobs (acessível de qualquer dispositivo)
 const qApi = {
-  getAll: ()      => fetch("/api/queue").then((r) => r.json()).catch(() => []),
-  save:   (items) => fetch("/api/queue", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Array.isArray(items) ? items : [items]) }).catch(() => {}),
-  update: (item)  => fetch("/api/queue", { method: "PUT",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(item) }).then((r) => r.json()).catch(() => item),
-  remove: (id)    => fetch(`/api/queue?id=${id}`, { method: "DELETE" }).catch(() => {}),
-  clear:  ()      => fetch("/api/queue", { method: "DELETE" }).catch(() => {}),
+  getAll:  ()       => fetch("/api/queue").then((r) => r.json()).catch(() => []),
+  save:    (items)  => fetch("/api/queue", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Array.isArray(items) ? items : [items]) }).catch(() => {}),
+  update:  (item)   => fetch("/api/queue", { method: "PUT",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(item) }).then((r) => r.json()).catch(() => item),
+  remove:  (id)     => fetch(`/api/queue?id=${id}`, { method: "DELETE" }).catch(() => {}),
+  clear:   ()       => fetch("/api/queue", { method: "DELETE" }).catch(() => {}),
 };
 
 function SchedulerProvider({ addEntry, children }) {
   const [queue, setQueue] = useState([]);
   const runningRef = useRef(new Set());
 
+  // ── Monitor de CDN ───────────────────────────────────────────────────────
+  const { cdnPaused, cdnStatus, checkCdn, pauseForCdn, resumeCdn } = useCdnMonitor(
+    queue,
+    (evt) => {
+      if (evt.type === "paused") window.dispatchEvent(new CustomEvent("cdn:paused",  { detail: evt }));
+      if (evt.type === "resumed") {
+        window.dispatchEvent(new CustomEvent("cdn:resumed", { detail: evt }));
+        reload();
+      }
+    }
+  );
+
   const reload = useCallback(async () => {
     const all = await qApi.getAll();
     if (!Array.isArray(all)) return;
     all.sort((a, b) => (a.scheduledAt || 0) - (b.scheduledAt || 0));
     setQueue(all);
+    // Espelha no IndexedDB local para o SW
     try { await dbClear("queue"); await dbPutMany("queue", all); } catch {}
 
-    // Sincroniza histórico de itens "done" pelo servidor
+    // ── Sincroniza histórico de itens concluídos pelo scheduler Netlify ──────
+    // Quando o cron serverless executa um post, ele marca o item como "done"
+    // no Blob mas nunca salva no IDB local — o histórico fica vazio.
+    // Aqui detectamos itens "done" sem historyId (concluídos pelo servidor)
+    // e criamos o registro de histórico local para que apareçam na UI.
     try {
-      const done = all.filter((x) => !x.type && x.status === "done" && !x._historySynced);
-      for (const item of done) {
+      const doneSemHistoria = all.filter(
+        (x) => !x.type && x.status === "done" && !x._historySynced
+      );
+      for (const item of doneSemHistoria) {
         const historyId = `h-srv-${item.id}`;
-        const exists = await dbGet("history", historyId).catch(() => null);
-        if (!exists) {
+        const jaExiste  = await dbGet("history", historyId).catch(() => null);
+        if (!jaExiste) {
           await dbPut("history", {
             id:              historyId,
             post_type:       item.postType,
-            media_url:       item.mediaUrl || "",
+            media_url:       item.mediaUrl || (item.mediaUrls?.[0] ?? ""),
             media_type:      item.mediaType,
-            default_caption: item.caption  || "",
+            default_caption: item.caption || "",
             results:         item.results  || [],
+            pending_accounts: [],
             created_at:      item.completedAt || new Date().toISOString(),
             from_scheduler:  true,
+            source:          item.warmup ? "warmup" : "schedule",
           });
         }
+        // Marca no Blob para não reprocessar na próxima chamada
         await qApi.update({ ...item, _historySynced: true }).catch(() => {});
       }
-      if (done.length > 0) window.dispatchEvent(new CustomEvent("sw:queue-update"));
-    } catch {}
+      if (doneSemHistoria.length > 0) {
+        window.dispatchEvent(new CustomEvent("sw:queue-update"));
+      }
+    } catch (e) {
+      console.warn("[sync-history]", e);
+    }
   }, []);
 
   useEffect(() => {
@@ -101,33 +180,115 @@ function SchedulerProvider({ addEntry, children }) {
     return () => window.removeEventListener("sw:queue-update", h);
   }, [reload]);
 
-  // Tick do scheduler no browser (fallback quando o cron não está ativo)
+  // ─── Tick do scheduler ───────────────────────────────────────────────────────
+  // O cron serverless (scheduler.mjs) roda a cada 5min no Netlify e é a fonte
+  // principal de execução. O scheduler do browser atua como fallback para:
+  //   1. Ambiente local (cron não existe)
+  //   2. video_finish — precisa de polling em tempo real para atualizar a UI
+  // Para evitar posts duplicados, o browser NÃO processa posts normais quando
+  // detecta que o cron serverless está ativo (responde ao ping).
   useEffect(() => {
     let cronAvailable = false;
 
     const detectCron = async () => {
       try {
         const res = await fetch("/api/scheduler", { method: "GET" });
-        cronAvailable = res.ok;
-      } catch { cronAvailable = false; }
+        cronAvailable = res.ok || res.status === 405; // 405 = existe mas não aceita GET
+      } catch {
+        cronAvailable = false;
+      }
     };
-    detectCron();
-    const cronCheck = setInterval(detectCron, 5 * 60_000);
+
+    // Detecta na inicialização e re-verifica a cada 5min
+    detectCron().catch(() => {});
+    const cronCheck = setInterval(() => detectCron().catch(() => {}), 5 * 60 * 1000);
+
+    // Reseta itens "running" travados (sempre, independente do cron)
+    const resetStuck = async () => {
+      const all = await qApi.getAll();
+      if (!Array.isArray(all)) return;
+      const stuck = all.filter((x) => x.status === "running");
+      for (const item of stuck) {
+        await qApi.update({ ...item, status: "pending", scheduledAt: Date.now() + 5000 });
+      }
+    };
+    resetStuck().catch(() => {});
 
     const tick = async () => {
       const all = await qApi.getAll();
       if (!Array.isArray(all)) return;
-      const now = Date.now();
+      const now    = Date.now();
+      const due    = all.filter((x) => !x.type && x.scheduledAt <= now && x.status === "pending");
+      const dueFin = all.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now);
 
-      // Reseta travados
-      for (const item of all.filter((x) => x.status === "running")) {
-        await qApi.update({ ...item, status: "pending", scheduledAt: now + 5000 });
+      // Processar video_finish
+      for (const vf of dueFin) {
+        if (runningRef.current.has(vf.id)) continue;
+        runningRef.current.add(vf.id);
+        try {
+          await qApi.update({ ...vf, status: "running" });
+          const res = await fetch("/.netlify/functions/publish-finish", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pending:  [{ account_id: vf.account_id, creation_id: vf.creation_id, username: vf.username }],
+              accounts: vf.accounts,
+            }),
+          });
+          if (!res.ok) throw new Error(`publish-finish HTTP ${res.status}`);
+          const data   = await res.json();
+          const result = (data.results || [])[0];
+          if (result?.success) {
+            const all2 = await dbGetAll("history");
+            const histEntry = all2.find((h) => h.id === vf.historyId) || null;
+            if (histEntry) {
+              const prevResults    = (histEntry.results || []).filter((r) => r.account_id !== vf.account_id);
+              const updatedResults = [...prevResults, result];
+              const updatedPending = (histEntry.pending_accounts || []).filter((a) => a.account_id !== vf.account_id);
+              await dbPut("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
+            }
+            await qApi.update({ ...vf, status: "done", result, finishedAt: new Date().toISOString() });
+          } else if (result && !result.success) {
+            const all2 = await dbGetAll("history");
+            const histEntry = all2.find((h) => h.id === vf.historyId) || null;
+            if (histEntry) {
+              const updatedResults = [...(histEntry.results || []), { account_id: vf.account_id, username: vf.username, success: false, error: result.error }];
+              const updatedPending = (histEntry.pending_accounts || []).filter((a) => a.account_id !== vf.account_id);
+              await dbPut("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
+            }
+            await qApi.update({ ...vf, status: "error", error: result.error });
+          } else {
+            const attempts = (vf.attempts || 0) + 1;
+            if (attempts >= (vf.maxAttempts || 20)) {
+              await qApi.update({ ...vf, status: "error", error: "Timeout: vídeo não processou" });
+            } else {
+              await qApi.update({ ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
+            }
+          }
+        } catch (err) {
+          const attempts = (vf.attempts || 0) + 1;
+          if (attempts >= (vf.maxAttempts || 20)) {
+            await qApi.update({ ...vf, status: "error", error: err.message }).catch(() => {});
+          } else {
+            await qApi.update({ ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 }).catch(() => {});
+          }
+        } finally {
+          runningRef.current.delete(vf.id);
+        }
+        reload();
       }
 
-      // Se o cron serverless está ativo, não processa aqui (evita duplicar)
-      if (cronAvailable) return;
+      // ── Verificar se CDN está pausado ───────────────────────────────────
+      if (cdnPaused) {
+        console.log("[scheduler] CDN pausado — fila suspensa até CDN voltar");
+        return;
+      }
 
-      const due = all.filter((x) => x.status === "pending" && x.scheduledAt <= now);
+      // Se o cron serverless está ativo, não processa posts normais no browser
+      // para evitar publicações duplicadas. Apenas video_finish roda aqui
+      // (precisa de polling em tempo real para atualizar o histórico na UI).
+      if (cronAvailable || !due.length) return;
+
       for (const item of due) {
         if (runningRef.current.has(item.id)) continue;
         runningRef.current.add(item.id);
@@ -135,106 +296,174 @@ function SchedulerProvider({ addEntry, children }) {
         reload();
 
         try {
-          const res = await fetch("/.netlify/functions/publish", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              accounts:        item.accounts,
-              media_url:       item.mediaUrl,
-              media_type:      item.mediaType,
-              post_type:       item.postType,
-              captions:        item.captions || {},
-              default_caption: item.caption  || "",
-              skip_rate_limit: true,
-            }),
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const data    = await res.json();
-          const results = data.results || [];
+          const urlsToPost = item.mediaUrls || [item.mediaUrl];
 
-          await addEntry({
-            id:              `h-${Date.now()}`,
-            post_type:       item.postType,
-            media_url:       item.mediaUrl,
-            media_type:      item.mediaType,
-            default_caption: item.caption,
-            results,
-            created_at:      new Date().toISOString(),
-            from_scheduler:  true,
-          });
+          for (let mi = 0; mi < urlsToPost.length; mi++) {
+            const mediaUrl = urlsToPost[mi];
+            if (mi > 0) await new Promise(r => setTimeout(r, 3000));
+
+            const MAX_RETRIES = 3;
+            let res, lastErr;
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+              if (attempt > 0) await new Promise(r => setTimeout(r, 5000 * Math.pow(3, attempt - 1)));
+              try {
+                res = await fetch("/.netlify/functions/publish", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    accounts:        item.accounts,
+                    media_url:       mediaUrl,
+                    media_type:      item.mediaType,
+                    post_type:       item.postType,
+                    captions:        item.captions || {},
+                    default_caption: item.caption  || "",
+                    delay_seconds:   0,
+                    skip_rate_limit: !!item.warmup,
+                  }),
+                });
+                if (res.ok || (res.status >= 400 && res.status < 500)) break;
+                lastErr = new Error(`HTTP ${res.status}`);
+              } catch (fetchErr) { lastErr = fetchErr; res = null; }
+            }
+
+            if (!res || !res.ok) throw lastErr || new Error(`HTTP ${res?.status}`);
+            const data    = await res.json();
+            const results = data.results || [];
+
+            // Detectar se algum erro é de CDN indisponível
+            const cdnErrors = results.filter((r) => !r.success && isCdnError(r.error));
+            if (cdnErrors.length >= 2) {
+              // 2+ contas com erro de CDN = CDN provavelmente fora
+              const cdnErr   = cdnErrors[0].error;
+              const checkRes = await checkCdn([mediaUrl]);
+              if (checkRes && !checkRes.ok) {
+                const cdnName = checkRes.cdnsDown?.[0]?.name || "CDN";
+                await pauseForCdn(`${cdnName} indisponível: ${cdnErr}`, cdnName);
+                // Reagendar item para daqui 10 min (quando CDN voltar, retomará)
+                await qApi.update({ ...item, status: "pending", scheduledAt: Date.now() + 10 * 60_000 });
+                break;
+              }
+            }
+
+            const pendingResults  = results.filter((r) => r.pending && r.creation_id);
+            const finishedResults = results.filter((r) => !r.pending);
+            const historyId       = `h-${Date.now()}-${mi}`;
+
+            for (const pr of pendingResults) {
+              const vfId = `vf-${historyId}-${pr.account_id}`;
+              await qApi.save({
+                id:          vfId,
+                type:        "video_finish",
+                status:      "pending",
+                creation_id: pr.creation_id,
+                account_id:  pr.account_id,
+                username:    pr.username || pr.account_id,
+                accounts:    item.accounts,
+                scheduledAt: Date.now() + 30000,
+                historyId,
+                mediaUrl,
+                postType:    item.postType,
+                mediaType:   item.mediaType,
+                caption:     item.caption || "",
+                createdAt:   new Date().toISOString(),
+                attempts:    0,
+                maxAttempts: 20,
+              });
+            }
+
+            const pendingAccounts = pendingResults.map((r) => ({
+              account_id: r.account_id,
+              username:   r.username || r.account_id,
+            }));
+
+            await addEntry({
+              id:               historyId,
+              post_type:        item.postType,
+              media_url:        mediaUrl,
+              media_type:       item.mediaType,
+              default_caption:  item.caption,
+              results:          finishedResults,
+              pending_accounts: pendingAccounts,
+              created_at:       new Date().toISOString(),
+              from_scheduler:   true,
+              source:           item.warmup ? "warmup" : "schedule",
+            });
+          }
 
           if (item.loop) {
-            await qApi.update({
-              ...item,
-              status:      "pending",
-              scheduledAt: item.scheduledAt + 60 * 60_000,
-              runCount:    (item.runCount || 0) + 1,
-            });
+            await qApi.update({ ...item, status: "pending", scheduledAt: item.scheduledAt + 86400000, runCount: (item.runCount || 0) + 1 });
           } else {
             await qApi.update({ ...item, status: "done" });
           }
         } catch (err) {
-          await qApi.update({ ...item, status: "error", error: err.message });
+          await qApi.update({ ...item, status: "error", error: err.message, failedAt: new Date().toISOString(), retryCount: (item.retryCount || 0) + 1 });
         }
+
         runningRef.current.delete(item.id);
         reload();
       }
     };
 
-    const iv = setInterval(tick, 15_000);
+    const iv = setInterval(tick, 10000);
     tick();
     return () => { clearInterval(iv); clearInterval(cronCheck); };
   }, [addEntry, reload]);
 
   const addBatch = async (items) => {
+    // Envia em lotes de 100 para não estourar limite de body (6MB) do Netlify
     const BATCH = 100;
     for (let i = 0; i < items.length; i += BATCH) {
       await qApi.save(items.slice(i, i + BATCH));
     }
     reload();
   };
+  const updateItem = async (item)  => { await qApi.update(item); reload(); };
+  const removeItem = async (id)    => { await qApi.remove(id); setQueue((p) => p.filter((x) => x.id !== id)); };
+  const clearQueue = async ()      => { await qApi.clear(); setQueue([]); };
 
-  const updateItem  = async (item) => { await qApi.update(item); reload(); };
-  const removeItem  = async (id)   => { await qApi.remove(id); setQueue((p) => p.filter((x) => x.id !== id)); };
-  const clearQueue  = async ()     => { await qApi.clear(); setQueue([]); };
-
+  // Cancela todos os pendentes sem deletar (podem ser reativados)
   const cancelPending = async () => {
     const all = await qApi.getAll();
-    const pending = all.filter((x) => x.status === "pending");
-    for (const item of pending) await qApi.update({ ...item, status: "cancelled" });
+    const pending = all.filter((x) => x.status === 'pending');
+    for (const item of pending) {
+      await qApi.update({ ...item, status: 'cancelled' });
+    }
     reload();
     return pending.length;
   };
 
+  // Reativa todos os cancelados
   const resumeQueue = async () => {
     const all = await qApi.getAll();
-    const cancelled = all.filter((x) => x.status === "cancelled");
-    for (const item of cancelled) await qApi.update({ ...item, status: "pending" });
+    const cancelled = all.filter((x) => x.status === 'cancelled');
+    for (const item of cancelled) {
+      await qApi.update({ ...item, status: 'pending' });
+    }
     reload();
     return cancelled.length;
   };
 
   return (
-    <SchedulerContext.Provider value={{ queue, addBatch, updateItem, removeItem, clearQueue, cancelPending, resumeQueue, reload }}>
+    <SchedulerContext.Provider value={{ queue, addBatch, updateItem, removeItem, clearQueue, cancelPending, resumeQueue, reload, cdnPaused, cdnStatus, resumeCdn }}>
       {children}
     </SchedulerContext.Provider>
   );
 }
 
-// ─── AppShell ─────────────────────────────────────────────────────────────────
+// ─── AppShell — usa os contextos (precisa estar dentro dos providers) ─────────
 function AppShell() {
-  const { addAccounts, accounts, syncing, loading: accountsLoading } = useAccounts();
-  const { toast, showToast } = useToast();
-  const { oauthUrl }         = useOAuthUrl();
-  const location = useLocation();
-  const { addEntry } = useHistory();
+  const { addAccounts, accounts, reloadAccounts, syncing, loading: accountsLoading } = useAccounts();
+  const { toast, showToast }   = useToast();
+  const { swStatus }           = useServiceWorker();
+  const { oauthUrl }           = useOAuthUrl();
 
+  // OAuth via popup — abre janela do Instagram, fecha sozinha, salva contas automaticamente
   const { status: oauthStatus, errorMsg: oauthError, openPopup, reset: resetOauth } = useOAuthPopup({
     onAccounts: async (accs) => {
       try {
         showToast("success", `✅ ${accs.length} conta(s) conectada(s)! Salvando...`);
         await addAccounts(accs);
-        showToast("success", `✅ ${accs.length} conta(s) salvas!`);
+        showToast("success", `✅ ${accs.length} conta(s) salvas com sucesso!`);
         resetOauth();
       } catch (err) {
         showToast("error", "Erro ao salvar contas: " + err.message);
@@ -247,11 +476,21 @@ function AppShell() {
       }
     },
   });
-
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const location = useLocation();
+  const { addEntry } = useHistory();
+
   useEffect(() => { setMobileMenuOpen(false); }, [location.pathname]);
 
-  // Lê contas da URL (callback OAuth)
+  useTokenCheck({
+    accounts,
+    onExpired: useCallback((expired) => {
+      reloadAccounts();
+      const nomes = expired.map((a) => `@${a.username}`).join(", ");
+      showToast("error", `Token expirado para: ${nomes}. Reconecte em Contas.`);
+    }, [showToast, reloadAccounts]),
+  });
+
   useEffect(() => {
     const params  = new URLSearchParams(window.location.search);
     const encoded = params.get("accounts");
@@ -261,9 +500,9 @@ function AppShell() {
       (async () => {
         try {
           const accs = JSON.parse(atob(encoded.replace(/-/g, "+").replace(/_/g, "/")));
-          showToast("success", `Salvando ${accs.length} conta(s)...`);
+          showToast("success", `Salvando ${accs.length} conta(s) na nuvem...`);
           await addAccounts(accs);
-          showToast("success", `✅ ${accs.length} conta(s) conectada(s)!`);
+          showToast("success", `✅ ${accs.length} conta(s) conectada(s) e salvas!`);
         } catch (err) {
           showToast("error", "Erro ao salvar contas: " + err.message);
         }
@@ -276,7 +515,7 @@ function AppShell() {
     <SchedulerProvider addEntry={addEntry}>
       <div style={{ display: "flex", minHeight: "100vh" }}>
         <aside style={{ width: 230, background: "var(--bg2)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh" }} className="sidebar-desktop">
-          <Sidebar accounts={accounts} oauthUrl={oauthUrl} syncing={syncing} loading={accountsLoading} onConnectInstagram={openPopup} oauthStatus={oauthStatus} />
+          <Sidebar accounts={accounts} swStatus={swStatus} oauthUrl={oauthUrl} syncing={syncing} loading={accountsLoading} onConnectInstagram={openPopup} oauthStatus={oauthStatus} />
         </aside>
 
         <div className="mobile-header">
@@ -300,17 +539,28 @@ function AppShell() {
 
         <main style={{ flex: 1, overflow: "auto", minWidth: 0, background: "var(--bg)" }}>
           <Toast toast={toast} />
+
+          {swStatus === "unsupported" && (
+            <div style={{ margin: "16px 32px 0", padding: "10px 16px", borderRadius: 10, fontSize: 12, background: "rgba(245,158,11,0.1)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.25)" }}>
+              ⚠️ Navegador não suporta Service Worker. O scheduler roda via React enquanto o site estiver aberto.
+            </div>
+          )}
+
           <Routes>
-            <Route path="/"          element={<Accounts />} />
-            <Route path="/fila"      element={<Queue />} />
-            <Route path="/historico" element={<History />} />
+            <Route path="/"            element={<Accounts />} />
+            <Route path="/fila"        element={<Queue />} />
+            <Route path="/historico"   element={<History />} />
+            <Route path="/aquecimento" element={<Warmup />} />
+            <Route path="/protecao"    element={<Protection />} />
+            <Route path="/logs"        element={<Logs />} />
+            <Route path="/insights"    element={<Insights />} />
           </Routes>
         </main>
 
         <style>{`
-          @keyframes slideIn     { from { opacity: 0; transform: translateX(20px);  } to { opacity: 1; transform: translateX(0); } }
-          @keyframes slideInLeft { from { opacity: 0; transform: translateX(-100%); } to { opacity: 1; transform: translateX(0); } }
-          @keyframes spin        { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+          @keyframes slideIn      { from { opacity: 0; transform: translateX(20px);  } to { opacity: 1; transform: translateX(0); } }
+          @keyframes slideInLeft  { from { opacity: 0; transform: translateX(-100%); } to { opacity: 1; transform: translateX(0); } }
+          @keyframes spin         { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
           .sidebar-desktop { display: flex; }
           .mobile-header   { display: none; }
           @media (max-width: 768px) {
@@ -324,10 +574,13 @@ function AppShell() {
   );
 }
 
+// ─── App — fornece os providers e renderiza AppShell ─────────────────────────
 export default function App() {
   return (
     <HistoryProvider>
-      <AppShell />
+      <WarmupProvider>
+        <AppShell />
+      </WarmupProvider>
     </HistoryProvider>
   );
 }
