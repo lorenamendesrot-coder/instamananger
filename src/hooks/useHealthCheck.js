@@ -4,7 +4,6 @@ import { dbGet, dbPut } from "../useDB.js";
 
 const DB_KEY         = "health_check_latest";
 const STORE          = "protection";
-const CHECK_INTERVAL = 24 * 60 * 60 * 1000;
 const MIN_INTERVAL   = 60 * 60 * 1000;
 
 export function useHealthCheck(accounts, { onAutoPause, onToast } = {}) {
@@ -55,14 +54,7 @@ export function useHealthCheck(accounts, { onAutoPause, onToast } = {}) {
     }
   }, [accounts, lastRun, onAutoPause, onToast]);
 
-  // Dispara 1x por dia automaticamente
-  useEffect(() => {
-    if (!accounts?.length) return;
-    const shouldRun = !lastRun || Date.now() - lastRun.getTime() >= CHECK_INTERVAL;
-    if (shouldRun) runCheck();
-    const iv = setInterval(() => runCheck(), CHECK_INTERVAL);
-    return () => clearInterval(iv);
-  }, [accounts?.length]);
+  // Health check somente manual — use o botão na página de Proteção
 
   const stats = result ? {
     total:   result.total        || 0,
