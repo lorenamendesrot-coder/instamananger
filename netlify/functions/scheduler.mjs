@@ -77,61 +77,28 @@ async function queueSave(store, newItem) {
   });
 }
 
-// ─── Publish em batches resilientes ──────────────────────────────────────────
-// Cada batch é chamado individualmente.
-// Se um batch falhar, as contas dele são registradas como falha no resultado
-// e os demais batches continuam normalmente.
-
-const BATCH_SIZE     = parseInt(process.env.PUBLISH_BATCH_SIZE || "5");
-const RETRY_DELAY_MS = 10 * 60 * 1000; // 10 minutos
-
-async function callPublishAllBatches(item, mediaUrl) {
-  const allResults = [];
-  let offset = 0;
-
-  while (offset < item.accounts.length) {
-    try {
-      const res = await fetch(`${SITE_URL}/.netlify/functions/publish`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accounts:        item.accounts,
-          media_url:       mediaUrl,
-          media_type:      item.mediaType,
-          post_type:       item.postType,
-          captions:        item.captions        || {},
-          default_caption: item.caption         || "",
-          skip_rate_limit: !!item.warmup,
-          batch_offset:    offset,
-        }),
-      });
-
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      allResults.push(...(data.results || []));
-
-      if (!data.has_more) break;
-      offset = data.next_offset;
-    } catch (err) {
-      // Batch falhou — registra cada conta desse batch e continua para o próximo
-      console.warn(`[scheduler] batch offset=${offset} falhou: ${err.message}`);
-      const batchAccounts = item.accounts.slice(offset, offset + BATCH_SIZE);
-      for (const acc of batchAccounts) {
-        allResults.push({
-          account_id:  acc.id,
-          username:    acc.username,
-          success:     false,
-          error:       err.message,
-          batch_error: true,
-        });
-      }
-      offset += BATCH_SIZE;
+// ─── Inserção em lote atômica (1 write para N sub-itens) ─────────────────────
+async function queueSaveMany(store, newItems) {
+  await withLock(store, (queue) => {
+    for (const item of newItems) {
+      const idx = queue.findIndex((x) => x.id === item.id);
+      if (idx >= 0) queue[idx] = item;
+      else queue.push(item);
     }
-  }
-
-  return { results: allResults };
+    return queue;
+  });
 }
 
+// ─── Constantes ───────────────────────────────────────────────────────────────
+
+// Intervalo entre sub-itens per_account (substitui o delay interno do publish).
+// Cada conta é agendada com esse gap — o scheduler despacha 1 conta por tick,
+// sem nenhum sleep dentro da função. Padrão: 15s (cabe folgado em 5 ticks/min).
+const ACCOUNT_GAP_MS = parseInt(process.env.ACCOUNT_GAP_MS || "15000");
+
+const RETRY_DELAY_MS = 10 * 60 * 1000; // 10 minutos
+
+// ─── Publish-finish via HTTP ──────────────────────────────────────────────────
 async function callPublishFinish(vf) {
   const res = await fetch(`${SITE_URL}/.netlify/functions/publish-finish`, {
     method:  "POST",
@@ -157,8 +124,6 @@ async function processVideoFinish(store, vf) {
     if (result?.success) {
       console.log(`[scheduler] ✅ video_finish @${vf.username} publicado`);
       await queueUpdate(store, { ...vf, status: "done", result, finishedAt: new Date().toISOString() });
-
-      // Acumula resultado no item pai para o histórico ficar correto
       await pushResultToParent(store, vf.historyId, {
         account_id:   vf.account_id,
         username:     vf.username,
@@ -172,8 +137,6 @@ async function processVideoFinish(store, vf) {
     if (result && !result.success) {
       console.error(`[scheduler] ❌ video_finish @${vf.username}: ${result.error}`);
       await queueUpdate(store, { ...vf, status: "error", error: result.error });
-
-      // Acumula falha no item pai também
       await pushResultToParent(store, vf.historyId, {
         account_id: vf.account_id,
         username:   vf.username,
@@ -212,30 +175,32 @@ async function processVideoFinish(store, vf) {
   }
 }
 
-// Acumula resultado de um video_finish no array results[] do item pai.
-// Quando o último video_finish termina, marca o pai como "done".
+// ─── pushResultToParent ───────────────────────────────────────────────────────
+// Acumula resultado de um sub-item (per_account ou video_finish) no item pai.
+// Quando o último sub-item termina, marca o pai como "done".
 async function pushResultToParent(store, historyId, result) {
   if (!historyId) return;
   try {
     await withLock(store, (queue) => {
-      const parent = queue.find((x) => !x.type && x.historyId === historyId);
+      // Pai pode ser um item normal (sem type) ou um item com type="group"
+      const parent = queue.find((x) => x.historyId === historyId && (x.type === "group" || !x.type));
       if (!parent) return queue;
 
-      const existing = (parent.results || []).filter((r) => r.account_id !== result.account_id);
+      const existing   = (parent.results || []).filter((r) => r.account_id !== result.account_id);
       const newResults = [...existing, result];
 
-      // Verifica se ainda há video_finish pendentes/running para este historyId
-      const pendingVF = queue.filter(
-        (x) => x.type === "video_finish" &&
+      // Verifica se ainda há sub-itens pendentes/running para este historyId
+      const pendingChildren = queue.filter(
+        (x) => (x.type === "per_account" || x.type === "video_finish") &&
                x.historyId === historyId &&
                (x.status === "pending" || x.status === "running") &&
-               x.account_id !== result.account_id // este acabou de terminar
+               x.account_id !== result.account_id
       );
 
-      const allDone = pendingVF.length === 0;
+      const allDone = pendingChildren.length === 0;
       const updated = {
         ...parent,
-        results:     newResults,
+        results: newResults,
         ...(allDone && !parent.loop ? {
           status:      "done",
           completedAt: new Date().toISOString(),
@@ -254,142 +219,221 @@ async function pushResultToParent(store, historyId, result) {
   }
 }
 
-// ─── Processamento de item normal ─────────────────────────────────────────────
-async function processItem(store, item) {
-  const total = (item.accounts || []).length;
-  console.log(`[scheduler] item ${item.id} — ${total} conta(s), tipo ${item.postType}`);
+// ─── Processamento de sub-item per_account ────────────────────────────────────
+// Cada sub-item representa 1 conta de 1 publicação original.
+// publish.mjs é chamado com 1 conta, sem batch, sem delay interno.
+async function processPerAccount(store, item) {
+  console.log(`[scheduler] per_account @${item.username} (${item.historyId})`);
   await queueUpdate(store, { ...item, status: "running" });
 
   try {
-    const urlsToPost = item.mediaUrls || [item.mediaUrl];
+    const res = await fetch(`${SITE_URL}/.netlify/functions/publish`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accounts:        [item.account],
+        media_url:       item.mediaUrl,
+        media_type:      item.mediaType,
+        post_type:       item.postType,
+        captions:        item.captions        || {},
+        default_caption: item.caption         || "",
+        skip_rate_limit: !!item.warmup,
+        // batch_offset 0 → publica só a 1 conta do array
+      }),
+    });
 
-    const allFinishedResults = []; // acumula resultados de todas as mídias para salvar no done
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data   = await res.json();
+    const result = (data.results || [])[0];
 
-    for (let mi = 0; mi < urlsToPost.length; mi++) {
-      const mediaUrl = urlsToPost[mi];
-      if (mi > 0) await new Promise((r) => setTimeout(r, 3000));
+    if (!result) throw new Error("Resposta sem result");
 
-      const { results } = await callPublishAllBatches(item, mediaUrl);
-
-      // ── Separa os resultados ──────────────────────────────────────────────
-      const succeeded     = results.filter((r) => r.success);
-      const pendingVideos = results.filter((r) => r.pending && r.creation_id);
-      const failed        = results.filter((r) => !r.success && !r.pending);
-
-      // ── Cria itens video_finish para Reels que ainda estão processando ────
-      const historyId = `h-${Date.now()}-${mi}`;
-      for (const pr of pendingVideos) {
-        await queueSave(store, {
-          id:          `vf-${historyId}-${pr.account_id}`,
-          type:        "video_finish",
-          status:      "pending",
-          creation_id: pr.creation_id,
-          account_id:  pr.account_id,
-          username:    pr.username || pr.account_id,
-          accounts:    item.accounts,
-          scheduledAt: Date.now() + 30000,
-          historyId,
-          parentId:    item.id,
-          mediaUrl,
-          postType:    item.postType,
-          mediaType:   item.mediaType,
-          caption:     item.caption || "",
-          createdAt:   new Date().toISOString(),
-          attempts:    0,
-          maxAttempts: 20,
-        });
-      }
-
-      // Salva historyId no item pai para que pushResultToParent consiga encontrá-lo
-      if (pendingVideos.length > 0) {
-        await queueUpdate(store, { ...item, historyId, status: "running" });
-      }
-
-      // ── Reagenda contas que falharam (1 chance de retry por item) ─────────
-      // Contas com rate_limited não entram aqui — o rate limit cuida delas.
-      const failedNonRL = failed.filter((r) => !r.rate_limited);
-      if (failedNonRL.length > 0) {
-        const alreadyFailed = new Set(item.failedAccountIds || []);
-        const toRetry = [];
-        const giveUp  = [];
-
-        for (const r of failedNonRL) {
-          if (alreadyFailed.has(r.account_id)) {
-            giveUp.push(r);
-            console.error(`[scheduler] ❌ @${r.username} falhou 2x no item ${item.id} — desistindo: ${r.error}`);
-          } else {
-            toRetry.push(r);
-          }
-        }
-
-        if (toRetry.length > 0) {
-          const retryAccounts = item.accounts.filter((a) =>
-            toRetry.some((r) => r.account_id === a.id)
-          );
-          await queueSave(store, {
-            ...item,
-            id:               `retry-${item.id}-${Date.now()}`,
-            status:           "pending",
-            accounts:         retryAccounts,
-            scheduledAt:      Date.now() + RETRY_DELAY_MS,
-            failedAccountIds: [...alreadyFailed, ...toRetry.map((r) => r.account_id)],
-            retryOf:          item.id,
-            createdAt:        new Date().toISOString(),
-            loop:             false, // retry não herda loop
-          });
-          console.log(`[scheduler] ↻ ${toRetry.length} conta(s) reagendadas em 10min`);
-        }
-      }
-
-      // Acumula resultados finalizados para salvar no histórico
-      allFinishedResults.push(...succeeded, ...failed);
-
-      console.log(
-        `[scheduler] item ${item.id} — ` +
-        `${succeeded.length} ok, ${pendingVideos.length} vídeos pendentes, ` +
-        `${failedNonRL.filter((r) => !r.batch_error).length} erros de API, ` +
-        `${failedNonRL.filter((r) => r.batch_error).length} erros de batch`
-      );
+    if (result.rate_limited) {
+      // Reagenda para depois do wait_ms indicado pelo rate limit
+      const delay = result.wait_ms || RETRY_DELAY_MS;
+      console.log(`[scheduler] ⏳ @${item.username} rate limited — reagendando em ${Math.round(delay/60000)}min`);
+      await queueUpdate(store, { ...item, status: "pending", scheduledAt: Date.now() + delay });
+      return;
     }
 
-    // ── Finaliza item original ────────────────────────────────────────────
-    if (item.loop) {
-      const HOUR_MS = 3600 * 1000;
-      const JITTER  = Math.floor(Math.random() * 360 - 180) * 1000;
-      await queueUpdate(store, {
-        ...item,
+    if (result.pending && result.creation_id) {
+      // Vídeo ainda processando → cria video_finish
+      console.log(`[scheduler] 🎬 @${item.username} vídeo em processamento — criando video_finish`);
+      await queueSave(store, {
+        id:          `vf-${item.historyId}-${item.account_id}`,
+        type:        "video_finish",
         status:      "pending",
-        scheduledAt: item.scheduledAt + HOUR_MS + JITTER,
-        runCount:    (item.runCount || 0) + 1,
+        creation_id: result.creation_id,
+        account_id:  item.account_id,
+        username:    item.username,
+        accounts:    [item.account],
+        scheduledAt: Date.now() + 30000,
+        historyId:   item.historyId,
+        parentId:    item.parentId,
+        mediaUrl:    item.mediaUrl,
+        postType:    item.postType,
+        mediaType:   item.mediaType,
+        caption:     item.caption || "",
+        createdAt:   new Date().toISOString(),
+        attempts:    0,
+        maxAttempts: 20,
       });
-    } else {
-      // Marca done imediatamente. Para Reels, allFinishedResults pode estar vazio
-      // — os resultados reais chegam via video_finish e são salvos pelo pushResultToParent.
-      // O browser sincroniza o histórico lendo item.results após todos video_finish terminarem.
-      await queueUpdate(store, {
+      // Marca o sub-item como aguardando video_finish (não done ainda)
+      await queueUpdate(store, { ...item, status: "done", awaitingVideoFinish: true });
+      return;
+    }
+
+    if (result.success) {
+      console.log(`[scheduler] ✅ @${item.username} publicado`);
+      await queueUpdate(store, { ...item, status: "done", result, finishedAt: new Date().toISOString() });
+      await pushResultToParent(store, item.historyId, {
+        account_id:   item.account_id,
+        username:     item.username,
+        success:      true,
+        media_id:     result.media_id,
+        published_at: result.published_at,
+      });
+      return;
+    }
+
+    // Falha — retry 1x (salvo se já é retry)
+    const errMsg = result.error || "Erro desconhecido";
+    console.error(`[scheduler] ❌ @${item.username}: ${errMsg}`);
+    const alreadyFailed = item.failedAccountIds || [];
+
+    if (!alreadyFailed.includes(item.account_id)) {
+      // 1ª falha → reagenda em 10min
+      await queueSave(store, {
         ...item,
-        status:      "done",
-        results:     allFinishedResults,
-        completedAt: new Date().toISOString(),
-        finishedAt:  new Date().toISOString(),
+        id:               `retry-${item.id}-${Date.now()}`,
+        status:           "pending",
+        scheduledAt:      Date.now() + RETRY_DELAY_MS,
+        failedAccountIds: [...alreadyFailed, item.account_id],
+        retryOf:          item.id,
+        createdAt:        new Date().toISOString(),
+      });
+      await queueUpdate(store, { ...item, status: "done", skippedForRetry: true });
+      console.log(`[scheduler] ↻ @${item.username} reagendado em 10min`);
+    } else {
+      // 2ª falha → desiste
+      await queueUpdate(store, { ...item, status: "error", error: errMsg, finishedAt: new Date().toISOString() });
+      await pushResultToParent(store, item.historyId, {
+        account_id: item.account_id,
+        username:   item.username,
+        success:    false,
+        error:      errMsg,
       });
     }
 
   } catch (err) {
-    console.error(`[scheduler] ❌ item ${item.id}: ${err.message}`);
+    console.error(`[scheduler] ❌ per_account @${item.username}: ${err.message}`);
+    await queueUpdate(store, { ...item, status: "error", error: err.message, finishedAt: new Date().toISOString() });
+    await pushResultToParent(store, item.historyId, {
+      account_id: item.account_id,
+      username:   item.username,
+      success:    false,
+      error:      err.message,
+    });
+  }
+}
+
+// ─── Processamento de item normal → explode em per_account ───────────────────
+// Não publica nada. Cria N sub-itens per_account com scheduledAt escalonado
+// e marca o item original como grupo (type="group", status="running").
+// Retorna imediatamente — sem timeout.
+async function processItem(store, item) {
+  const accounts = item.accounts || [];
+  const total    = accounts.length;
+  console.log(`[scheduler] item ${item.id} — explodindo em ${total} sub-itens per_account`);
+
+  const historyId = item.historyId || `h-${item.id}-${Date.now()}`;
+  const now       = Date.now();
+
+  const urlsToPost = item.mediaUrls || [item.mediaUrl];
+
+  // Para múltiplas mídias, escalonamos: mídia 0 conta 0, mídia 0 conta 1, ...,
+  // mídia 1 conta 0, etc. Gap entre cada publicação = ACCOUNT_GAP_MS.
+  const subItems = [];
+  let slotIndex  = 0;
+
+  for (let mi = 0; mi < urlsToPost.length; mi++) {
+    const mediaUrl = urlsToPost[mi];
+    for (let ai = 0; ai < accounts.length; ai++) {
+      const account = accounts[ai];
+      subItems.push({
+        id:          `pa-${historyId}-m${mi}-${account.id}`,
+        type:        "per_account",
+        status:      "pending",
+        historyId,
+        parentId:    item.id,
+        account,
+        account_id:  account.id,
+        username:    account.username || account.id,
+        mediaUrl,
+        mediaIndex:  mi,
+        mediaType:   item.mediaType,
+        postType:    item.postType,
+        captions:    item.captions || {},
+        caption:     item.caption  || "",
+        warmup:      item.warmup   || false,
+        scheduledAt: now + slotIndex * ACCOUNT_GAP_MS,
+        createdAt:   new Date().toISOString(),
+        failedAccountIds: item.failedAccountIds || [],
+      });
+      slotIndex++;
+    }
+  }
+
+  // Escreve todos os sub-itens num único write atômico
+  await withLock(store, (queue) => {
+    // Converte o item pai para type="group"
+    const parentIdx = queue.findIndex((x) => x.id === item.id);
+    const groupItem = {
+      ...item,
+      type:      "group",
+      historyId,
+      status:    "running",
+      results:   [],
+      startedAt: new Date().toISOString(),
+      totalAccounts: total * urlsToPost.length,
+    };
+    if (parentIdx >= 0) queue[parentIdx] = groupItem;
+    else queue.push(groupItem);
+
+    // Adiciona os sub-itens
+    for (const sub of subItems) {
+      const idx = queue.findIndex((x) => x.id === sub.id);
+      if (idx >= 0) queue[idx] = sub;
+      else queue.push(sub);
+    }
+
+    return queue;
+  });
+
+  const lastSlotMs = (slotIndex - 1) * ACCOUNT_GAP_MS;
+  console.log(`[scheduler] ✅ item ${item.id} → ${subItems.length} sub-itens criados, último slot em ${Math.round(lastSlotMs/1000)}s`);
+
+  // Loop: reagenda o grupo para daqui a 1h (depois que todos sub-itens terminarem)
+  // A checagem de conclusão acontece no pushResultToParent.
+  if (item.loop) {
+    const HOUR_MS = 3600 * 1000;
+    const JITTER  = Math.floor(Math.random() * 360 - 180) * 1000;
+    // O item pai é atualizado novamente para loop após todos sub-itens concluírem
+    // Aqui apenas registramos o próximo scheduledAt no grupo
     await queueUpdate(store, {
       ...item,
-      status:     "error",
-      error:      err.message,
-      failedAt:   new Date().toISOString(),
-      retryCount: (item.retryCount || 0) + 1,
+      type:        "group",
+      historyId,
+      status:      "running",
+      scheduledAt: item.scheduledAt + HOUR_MS + JITTER,
+      runCount:    (item.runCount || 0) + 1,
+      totalAccounts: total * urlsToPost.length,
     });
   }
 }
 
 // ─── Handler principal ────────────────────────────────────────────────────────
 export default async function handler(request) {
-  // Ping de detecção: o frontend faz GET para saber se o cron está ativo.
   if (request && request.method === "GET") {
     return new Response(JSON.stringify({ ok: true, cron: true }), {
       status: 200,
@@ -415,53 +459,63 @@ export default async function handler(request) {
   const queue = await queueReadAll(store);
   const now   = Date.now();
 
-  // Reseta itens "running" travados por mais de 8 minutos.
-  // Aumentado de 3 → 8 min: com 50 contas, callPublishAllBatches faz até
-  // 10 chamadas HTTP sequenciais (~2-3s cada) e pode levar até 7 min legítimos.
-  // 15min: com delay sequencial entre contas (8-20s) + 10 contas + polling de vídeo,
-  // um item legítimo pode levar até ~5min. 15min dá margem ampla antes de resetar.
-  const STUCK_MS   = 15 * 60 * 1000;
-  const stuckItems = queue.filter(
-    (x) => x.status === "running" && x.startedAt && now - new Date(x.startedAt).getTime() > STUCK_MS
-  );
-  // Stuck reset ainda é sequencial — são raros e não precisam de concorrência
+  // Reseta itens "running" travados.
+  // Grupos (type="group") nunca ficam "running" por muito tempo — eles só
+  // transitam para running durante a explosão em sub-itens (< 2s).
+  // per_account travados: 5 min de margem.
+  const STUCK_MS_PERACCCOUNT = 5 * 60 * 1000;
+  const STUCK_MS_VF          = 15 * 60 * 1000;
+
+  const stuckItems = queue.filter((x) => {
+    if (x.status !== "running" || !x.startedAt) return false;
+    const age = now - new Date(x.startedAt).getTime();
+    if (x.type === "per_account") return age > STUCK_MS_PERACCCOUNT;
+    if (x.type === "video_finish") return age > STUCK_MS_VF;
+    return age > STUCK_MS_VF; // grupos e legados
+  });
+
   for (const item of stuckItems) {
-    console.warn(`[scheduler] resetando item travado ${item.id}`);
+    console.warn(`[scheduler] resetando item travado ${item.id} (${item.type || "normal"})`);
     await queueUpdate(store, { ...item, status: "pending", scheduledAt: now + 5000 });
   }
 
-  const dueNormal = queue.filter((x) => !x.type && x.status === "pending" && x.scheduledAt <= now);
-  const dueFinish = queue.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now);
+  // Itens pendentes vencidos por tipo
+  const dueNormal     = queue.filter((x) => !x.type && x.status === "pending" && x.scheduledAt <= now);
+  const duePerAccount = queue.filter((x) => x.type === "per_account" && x.status === "pending" && x.scheduledAt <= now);
+  const dueFinish     = queue.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now);
 
-  console.log(`[scheduler] ${dueNormal.length} posts + ${dueFinish.length} video_finish vencidos`);
+  console.log(`[scheduler] ${dueNormal.length} posts + ${duePerAccount.length} per_account + ${dueFinish.length} video_finish vencidos`);
 
-  if (dueNormal.length === 0 && dueFinish.length === 0) {
+  if (dueNormal.length === 0 && duePerAccount.length === 0 && dueFinish.length === 0) {
     return new Response(JSON.stringify({ ok: true, processed: 0 }), {
       status: 200, headers: { "Content-Type": "application/json" },
     });
   }
 
-  // ── Concorrência limitada ────────────────────────────────────────────────
-  // Processa até N items em paralelo em vez de sequencial puro.
-  // video_finish são leves (1 fetch) → limite 5.
-  // Posts normais são pesados (N batches × M contas) → limite 3.
-  // Cada lote aguarda todos terminarem antes do próximo — garante que o
-  // tempo total da função cabe dentro do timeout da Netlify (26s agendadas).
-  const CONCURRENT_NORMAL = 3;
-  const CONCURRENT_FINISH = 5;
+  // ── Processamento ────────────────────────────────────────────────────────────
+  // Itens normais → processItem() apenas cria sub-itens na fila (< 2s cada).
+  //   Pode rodar até 5 em paralelo sem risco de timeout.
+  // per_account → 1 fetch para o publish (~2-5s). Limite 3 em paralelo para
+  //   não sobrecarregar a API do Instagram com burst simultâneo.
+  // video_finish → 1 fetch leve. Limite 5.
 
+  await runConcurrent(
+    dueNormal,
+    (item) => processItem(store, item),
+    5,
+  );
   await runConcurrent(
     dueFinish,
     (vf) => processVideoFinish(store, { ...vf, startedAt: new Date().toISOString() }),
-    CONCURRENT_FINISH,
+    5,
   );
   await runConcurrent(
-    dueNormal,
-    (item) => processItem(store, { ...item, startedAt: new Date().toISOString() }),
-    CONCURRENT_NORMAL,
+    duePerAccount,
+    (item) => processPerAccount(store, { ...item, startedAt: new Date().toISOString() }),
+    3,
   );
 
-  const total = dueNormal.length + dueFinish.length;
+  const total = dueNormal.length + duePerAccount.length + dueFinish.length;
   console.log(`[scheduler] concluído — ${total} item(s) processados`);
   return new Response(JSON.stringify({ ok: true, processed: total }), {
     status: 200, headers: { "Content-Type": "application/json" },
@@ -469,9 +523,6 @@ export default async function handler(request) {
 }
 
 // ─── Concorrência limitada ────────────────────────────────────────────────────
-// Executa fn() em lotes de até `limit` promises simultâneas.
-// Aguarda cada lote terminar antes do próximo — sem estourar memória nem
-// gerar contention excessivo no lock do Blob com muitas escritas paralelas.
 async function runConcurrent(items, fn, limit) {
   for (let i = 0; i < items.length; i += limit) {
     const batch = items.slice(i, i + limit);
@@ -480,5 +531,5 @@ async function runConcurrent(items, fn, limit) {
 }
 
 export const config = {
-  schedule: "*/5 * * * *",
+  schedule: "*/1 * * * *",  // A cada 1 minuto — sub-itens com gap de 15s precisam de ticks mais frequentes
 };

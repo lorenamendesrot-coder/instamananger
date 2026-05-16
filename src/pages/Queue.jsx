@@ -105,11 +105,13 @@ export default function Queue() {
   const [forcingId,      setForcingId]      = useState(null);      // id do item sendo forçado
   const [forceConfirm,   setForceConfirm]   = useState(null);      // item aguardando confirmação
 
-  // Separar itens normais dos video_finish (tarefas internas do SW)
-  const mainQueue   = useMemo(() => queue.filter((q) => !q.type), [queue]);
+  // Itens visíveis: sem type (legado) ou type="group" (novo modelo explodido)
+  // Ocultos da lista principal: per_account e video_finish (tarefas internas)
+  const mainQueue   = useMemo(() => queue.filter((q) => !q.type || q.type === "group"), [queue]);
   const videoFinish = useMemo(() => queue.filter((q) => q.type === "video_finish"), [queue]);
+  const perAccount  = useMemo(() => queue.filter((q) => q.type === "per_account"),  [queue]);
 
-  // Mapa itemId → video_finish items (por parentId ou historyId)
+  // Mapa itemId/historyId → video_finish items
   const vfByParent = useMemo(() => {
     const map = {};
     for (const vf of videoFinish) {
@@ -122,7 +124,19 @@ export default function Queue() {
     return map;
   }, [videoFinish]);
 
-  // IDs de itens pai que ainda têm video_finish ativos (pending/running)
+  // Mapa historyId → per_account items (progresso de publicação em massa)
+  const paByHistory = useMemo(() => {
+    const map = {};
+    for (const pa of perAccount) {
+      const key = pa.historyId;
+      if (!key) continue;
+      if (!map[key]) map[key] = [];
+      map[key].push(pa);
+    }
+    return map;
+  }, [perAccount]);
+
+  // IDs de itens pai que ainda têm sub-itens ativos (pending/running)
   const activeVfParentIds = useMemo(() => {
     const ids = new Set();
     for (const vf of videoFinish) {
@@ -131,8 +145,14 @@ export default function Queue() {
         if (vf.historyId) ids.add(vf.historyId);
       }
     }
+    for (const pa of perAccount) {
+      if (pa.status === "pending" || pa.status === "running") {
+        if (pa.parentId) ids.add(pa.parentId);
+        if (pa.historyId) ids.add(pa.historyId);
+      }
+    }
     return ids;
-  }, [videoFinish]);
+  }, [videoFinish, perAccount]);
 
   // Contadores de status
   const pendingCount = mainQueue.filter((q) => q.status === "pending").length;
@@ -205,17 +225,19 @@ export default function Queue() {
     }
   }, [updateItem, reloadQueue]);
 
-  // Auto-reload enquanto há video_finish pendentes
-  const hasPendingVF = videoFinish.some((v) => v.status === "pending" || v.status === "running");
+  // Auto-reload enquanto há video_finish ou per_account pendentes
+  const hasPendingVF       = videoFinish.some((v) => v.status === "pending" || v.status === "running");
+  const hasPendingPA       = perAccount.some((p) => p.status === "pending" || p.status === "running");
+  const hasPendingChildren = hasPendingVF || hasPendingPA;
   const pollRef = useRef(null);
   useEffect(() => {
-    if (hasPendingVF) {
+    if (hasPendingChildren) {
       pollRef.current = setInterval(reloadQueue, 8000);
     } else {
       clearInterval(pollRef.current);
     }
     return () => clearInterval(pollRef.current);
-  }, [hasPendingVF, reloadQueue]);
+  }, [hasPendingChildren, reloadQueue]);
 
   // Escuta SW updates
   useEffect(() => {
@@ -409,6 +431,7 @@ export default function Queue() {
           items={filtered}
           filterDay={filterDay}
           vfByParent={vfByParent}
+          paByHistory={paByHistory}
           activeVfParentIds={activeVfParentIds}
           onEdit={openEdit}
           onRemove={(id) => setConfirmModal({ type: "removeItem", id })}
@@ -492,7 +515,7 @@ export default function Queue() {
 }
 
 // ─── QueueList — lista com separadores de dia ────────────────────────────────
-function QueueList({ items, filterDay, vfByParent, activeVfParentIds, onEdit, onRemove, onForce, forcingId, selecting, selected, onToggleSelect }) {
+function QueueList({ items, filterDay, vfByParent, paByHistory, activeVfParentIds, onEdit, onRemove, onForce, forcingId, selecting, selected, onToggleSelect }) {
   // Quando "Todos os dias" está ativo, agrupa por dia com separador
   const groups = useMemo(() => {
     if (filterDay !== "all") return [{ label: null, items }];
@@ -536,6 +559,7 @@ function QueueList({ items, filterDay, vfByParent, activeVfParentIds, onEdit, on
               key={item.id}
               item={item}
               vfItems={vfByParent[item.id]}
+              paItems={paByHistory?.[item.historyId]}
               hasActiveVf={activeVfParentIds?.has(item.id)}
               onEdit={onEdit}
               onRemove={onRemove}
@@ -553,9 +577,16 @@ function QueueList({ items, filterDay, vfByParent, activeVfParentIds, onEdit, on
 }
 
 // ─── QueueItem — card individual ─────────────────────────────────────────────
-function QueueItem({ item, vfItems, hasActiveVf, onEdit, onRemove, onForce, forcingId, selecting, isSelected, onToggleSelect }) {
-  // Se está "done" mas ainda tem video_finish processando, mostra status especial
-  const isPublishingVideos = item.status === "done" && hasActiveVf;
+function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onForce, forcingId, selecting, isSelected, onToggleSelect }) {
+  // Para itens tipo "group": mostra progresso baseado em per_account
+  const isGroup        = item.type === "group";
+  const paTotal        = paItems?.length || 0;
+  const paDone         = paItems?.filter(p => p.status === "done" || p.status === "error").length || 0;
+  const paRunning      = paItems?.filter(p => p.status === "running").length || 0;
+  const hasActivePa    = paItems?.some(p => p.status === "pending" || p.status === "running");
+
+  // Se está "done" mas ainda tem video_finish ou per_account processando, mostra status especial
+  const isPublishingVideos = (item.status === "done" || item.status === "running") && (hasActiveVf || hasActivePa);
   const effectiveStatus    = isPublishingVideos ? "running" : item.status;
   const info               = STATUS_INFO[effectiveStatus] || STATUS_INFO.pending;
   const scheduledDate = new Date(item.scheduledAt);
@@ -608,7 +639,15 @@ function QueueItem({ item, vfItems, hasActiveVf, onEdit, onRemove, onForce, forc
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4, flexWrap: "wrap" }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: info.color }}>
-              {isPublishingVideos ? (
+              {isPublishingVideos && isGroup ? (
+                <>
+                  ⟳ PUBLICANDO{" "}
+                  <span style={{ fontWeight: 400, opacity: 0.8 }}>
+                    {paDone}/{paTotal} contas
+                    {paRunning > 0 ? ` (${paRunning} agora)` : ""}
+                  </span>
+                </>
+              ) : isPublishingVideos ? (
                 <>
                   ⟳ PUBLICANDO VÍDEOS{" "}
                   <span style={{ fontWeight: 400, opacity: 0.8 }}>
@@ -686,6 +725,25 @@ function QueueItem({ item, vfItems, hasActiveVf, onEdit, onRemove, onForce, forc
                     <span>@{vf.username}</span>
                     {vf.attempts > 0 && <span style={{ opacity: 0.65 }}>×{vf.attempts + 1}</span>}
                     {vf.error && <span style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{" — "}{vf.error}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* per_account badges (novo modelo de fila explodida) */}
+          {isGroup && paItems?.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+              {paItems.map((pa, i) => {
+                const paColor = pa.status === "done" ? "var(--success)" : pa.status === "error" ? "var(--danger)" : pa.status === "running" ? "var(--warning)" : "var(--info)";
+                const paBg    = pa.status === "done" ? "rgba(34,197,94,0.08)" : pa.status === "error" ? "rgba(239,68,68,0.08)" : pa.status === "running" ? "rgba(245,158,11,0.08)" : "rgba(56,189,248,0.08)";
+                const paIcon  = pa.status === "done" ? (pa.awaitingVideoFinish ? "🎬" : "✅") : pa.status === "error" ? "❌" : pa.status === "running" ? "⟳" : "⏳";
+                return (
+                  <div key={i} title={pa.error || (pa.awaitingVideoFinish ? "Aguardando processamento do vídeo" : "")} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, background: paBg, color: paColor, border: `1px solid ${paColor}40`, display: "flex", alignItems: "center", gap: 4 }}>
+                    <span>{paIcon}</span>
+                    <span>@{pa.username}</span>
+                    {pa.error && !pa.skippedForRetry && <span style={{ maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{" — "}{pa.error}</span>}
+                    {pa.skippedForRetry && <span style={{ opacity: 0.65 }}> retry↻</span>}
                   </div>
                 );
               })}

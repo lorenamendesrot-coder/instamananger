@@ -25,12 +25,16 @@
   node_bundler = "esbuild"
 
 [functions."publish"]
-  timeout = 26
+  # Sem delay interno agora — 1 conta = ~3-5s de API. 15s é margem ampla.
+  timeout = 15
 
 [functions."publish-finish"]
   timeout = 26
 
 [functions."scheduler"]
+  # Explode itens em sub-itens (< 2s por item normal) e processa
+  # per_account/video_finish individualmente (~3-5s cada, 3 em paralelo).
+  # 26s é suficiente para 3-5 per_account simultâneos.
   timeout = 26
 
 [functions."drive-auth"]

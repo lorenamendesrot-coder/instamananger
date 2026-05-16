@@ -5,26 +5,17 @@ const GRAPH_FB       = "https://graph.facebook.com/v21.0";
 const GRAPH_IG       = "https://graph.instagram.com";
 function isIGToken(t) { return t?.startsWith("IGAA"); }
 function graph(t)    { return isIGToken(t) ? GRAPH_IG : GRAPH_FB; }
-const sleep          = (ms) => new Promise((r) => setTimeout(r, ms));
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
 // ─── Conversão de URL do Google Drive ────────────────────────────────────────
-// Aceita qualquer formato de link do Drive e converte para download direto.
-// Formatos suportados:
-//   https://drive.google.com/file/d/FILE_ID/view
-//   https://drive.google.com/file/d/FILE_ID/view?usp=sharing
-//   https://drive.google.com/open?id=FILE_ID
-//   https://drive.google.com/uc?id=FILE_ID  (já no formato antigo)
 function resolveGoogleDriveUrl(url) {
   if (!url || !url.includes("drive.google.com")) return url;
 
   let fileId = null;
 
-  // Formato /file/d/FILE_ID/...
   const fileMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
   if (fileMatch) fileId = fileMatch[1];
 
-  // Formato ?id=FILE_ID ou &id=FILE_ID
   if (!fileId) {
     const idMatch = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
     if (idMatch) fileId = idMatch[1];
@@ -49,12 +40,15 @@ function getRLStore() {
   return getStore({ name: "insta-ratelimit", siteID, token, consistency: "strong" });
 }
 
-const MAX_DAY  = parseInt(process.env.MAX_POSTS_PER_DAY  || "50");
-const MAX_HOUR = parseInt(process.env.MAX_POSTS_PER_HOUR || "1");
-const MIN_GAP  = parseInt(process.env.MIN_GAP_MINUTES    || "10");
-const W_START  = parseInt(process.env.POST_WINDOW_START  || "0");
-const W_END    = parseInt(process.env.POST_WINDOW_END    || "24");
+const MAX_DAY   = parseInt(process.env.MAX_POSTS_PER_DAY  || "50");
+const MAX_HOUR  = parseInt(process.env.MAX_POSTS_PER_HOUR || "1");
+const MIN_GAP   = parseInt(process.env.MIN_GAP_MINUTES    || "10");
+const W_START   = parseInt(process.env.POST_WINDOW_START  || "0");
+const W_END     = parseInt(process.env.POST_WINDOW_END    || "24");
 const TZ_OFFSET = parseInt(process.env.TZ_OFFSET_HOURS   || "-3");
+
+// BATCH_SIZE ainda é respeitado para chamadas diretas do frontend (sem scheduler).
+// Quando o scheduler chama, sempre manda 1 conta — batch_offset/BATCH_SIZE não importam.
 const BATCH_SIZE = parseInt(process.env.PUBLISH_BATCH_SIZE || "5");
 
 function fmtWait(ms) {
@@ -133,16 +127,10 @@ async function recordPost(store, id, state, success) {
 }
 
 // ─── Publicacao por conta ─────────────────────────────────────────────────────
-// Para vídeos (Reels, Feed vídeo, Stories vídeo):
-//   1. Cria o container → Instagram começa a processar
-//   2. Retorna pending: true imediatamente com o creation_id
-//   3. O publish-finish (via scheduler) verifica depois quando está pronto e publica
-// Isso evita polling de 60-120s por conta dentro do publish, que travava a fila.
 async function publishOne({ account, media_url, media_type, post_type, caption }) {
   const token = account.access_token;
   if (!token) return { success: false, error: "Token nao encontrado. Reconecte a conta." };
 
-  // Converte links do Google Drive para URL de download direto
   const resolved_url = resolveGoogleDriveUrl(media_url);
 
   const isVideo = media_type === "VIDEO";
@@ -181,7 +169,7 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
       return { success: false, pending: true, creation_id: cData.id };
     }
 
-    // Imagens: publica diretamente (sem processamento assíncrono)
+    // Imagens: publica diretamente
     const pRes  = await fetch(`${graph(token)}/${account.id}/media_publish`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -257,24 +245,20 @@ export const handler = async (event) => {
     console.warn("[publish] Blobs nao configurado, rate-limit desativado:", err.message);
   }
 
+  // Quando chamado pelo scheduler (per_account), sempre vem 1 conta — batch de 1.
+  // Quando chamado diretamente pelo frontend, respeita BATCH_SIZE.
   const batch    = accounts.slice(batch_offset, batch_offset + BATCH_SIZE);
   const next     = batch_offset + BATCH_SIZE;
   const has_more = next < accounts.length;
 
-  console.log(`[publish] batch ${batch_offset}-${batch_offset + batch.length - 1} de ${accounts.length} conta(s) — sequencial com delay`);
+  // NOTA: sem delay entre contas aqui. O gap entre publicações é controlado
+  // pelo scheduler via scheduledAt escalonado dos sub-itens per_account.
+  // Isso garante que nenhuma invocação do publish.mjs estoure o timeout.
 
-  // Publica sequencialmente com delay aleatório entre contas (anti-shadowban).
-  // 3-8s é suficiente para evitar detecção de massa e cabe folgado no timeout da Netlify.
-  const DELAY_MIN_MS = parseInt(process.env.INTER_ACCOUNT_DELAY_MIN || "3000");  // 3s padrão
-  const DELAY_MAX_MS = parseInt(process.env.INTER_ACCOUNT_DELAY_MAX || "8000");  // 8s padrão
+  console.log(`[publish] ${batch.length} conta(s) — sem delay interno (gap gerenciado pelo scheduler)`);
 
   const results = [];
   for (let i = 0; i < batch.length; i++) {
-    if (i > 0) {
-      const delay = DELAY_MIN_MS + Math.floor(Math.random() * (DELAY_MAX_MS - DELAY_MIN_MS));
-      console.log(`[publish] aguardando ${Math.round(delay / 1000)}s antes da próxima conta...`);
-      await sleep(delay);
-    }
     const result = await processAccount({
       store, account: batch[i], media_url, media_type,
       post_type, captions, default_caption, skip_rate_limit,
