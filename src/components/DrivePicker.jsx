@@ -111,8 +111,10 @@ export default function DrivePicker({ accounts, onSchedule, onClose }) {
     const d = new Date(); d.setMinutes(d.getMinutes() + 15, 0, 0);
     return d.toISOString().slice(0, 16);
   });
-  const [gapMinutes, setGapMinutes] = useState(60);
-  const [scheduling, setScheduling] = useState(false);
+  const [gapMinutes,  setGapMinutes]  = useState(60);
+  const [jitterMin,   setJitterMin]   = useState(10); // ± minutos de jitter
+  const [loop,        setLoop]        = useState(false);
+  const [scheduling,  setScheduling]  = useState(false);
 
   const current = stack[stack.length - 1];
 
@@ -162,21 +164,27 @@ export default function DrivePicker({ accounts, onSchedule, onClose }) {
     const chosenVideos = videos.filter((v) => selected.has(v.id));
     const startMs      = new Date(startTime).getTime();
     const gapMs        = gapMinutes * 60 * 1000;
-    const items = chosenVideos.map((video, i) => ({
-      id:          `drive-${video.id}-${Date.now()}-${i}`,
-      status:      "pending",
-      postType,
-      mediaType:   "VIDEO",
-      mediaUrl:    video.url,
-      caption,
-      accounts,
-      scheduledAt: startMs + i * gapMs,
-      createdAt:   new Date().toISOString(),
-      loop:        false,
-      source:      "google_drive",
-      driveFileId: video.id,
-      driveName:   video.name,
-    }));
+    const jitterMs     = jitterMin * 60 * 1000; // máximo de variação em ms
+
+    const items = chosenVideos.map((video, i) => {
+      // Jitter aleatório entre -jitterMs e +jitterMs (exceto no primeiro post)
+      const jitter = i === 0 ? 0 : Math.floor(Math.random() * (jitterMs * 2 + 1)) - jitterMs;
+      return {
+        id:          `drive-${video.id}-${Date.now()}-${i}`,
+        status:      "pending",
+        postType,
+        mediaType:   "VIDEO",
+        mediaUrl:    video.url,
+        caption,
+        accounts,
+        scheduledAt: startMs + i * gapMs + jitter,
+        createdAt:   new Date().toISOString(),
+        loop,
+        source:      "google_drive",
+        driveFileId: video.id,
+        driveName:   video.name,
+      };
+    });
     await onSchedule(items);
     setScheduling(false);
     onClose();
@@ -358,6 +366,17 @@ export default function DrivePicker({ accounts, onSchedule, onClose }) {
                   <option value={1440}>1 dia</option>
                 </select>
               </div>
+              <div style={{ flex: 1, minWidth: 120 }}>
+                <div style={st.label}>Variação aleatória (jitter)</div>
+                <select value={jitterMin} onChange={(e) => setJitterMin(Number(e.target.value))} style={st.select}>
+                  <option value={0}>Sem variação</option>
+                  <option value={5}>± 5 min</option>
+                  <option value={10}>± 10 min</option>
+                  <option value={15}>± 15 min</option>
+                  <option value={20}>± 20 min</option>
+                  <option value={30}>± 30 min</option>
+                </select>
+              </div>
               <div style={{ flex: 1, minWidth: 160 }}>
                 <div style={st.label}>Início do agendamento</div>
                 <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} style={st.input} />
@@ -372,10 +391,33 @@ export default function DrivePicker({ accounts, onSchedule, onClose }) {
             </div>
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                <strong style={{ color: "var(--fg)" }}>{selected.size}</strong> vídeo{selected.size !== 1 ? "s" : ""} ·{" "}
-                <strong style={{ color: "var(--fg)" }}>{accounts?.length || 0}</strong> conta{accounts?.length !== 1 ? "s" : ""} ·{" "}
-                início {new Date(startTime).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                {/* Resumo */}
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  <strong style={{ color: "var(--fg)" }}>{selected.size}</strong> vídeo{selected.size !== 1 ? "s" : ""} ·{" "}
+                  <strong style={{ color: "var(--fg)" }}>{accounts?.length || 0}</strong> conta{accounts?.length !== 1 ? "s" : ""} ·{" "}
+                  início {new Date(startTime).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                  {jitterMin > 0 && <span style={{ color: "var(--accent-light)" }}> · ±{jitterMin}min jitter</span>}
+                </div>
+                {/* Toggle loop */}
+                <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", userSelect: "none", fontSize: 13, color: loop ? "var(--accent-light)" : "var(--muted)", whiteSpace: "nowrap" }}>
+                  <div
+                    onClick={() => setLoop((v) => !v)}
+                    style={{
+                      width: 36, height: 20, borderRadius: 10, position: "relative",
+                      background: loop ? "var(--accent)" : "var(--bg3)",
+                      border: `1px solid ${loop ? "var(--accent)" : "var(--border)"}`,
+                      transition: "all 0.2s", cursor: "pointer", flexShrink: 0,
+                    }}
+                  >
+                    <div style={{
+                      position: "absolute", top: 2, left: loop ? 17 : 2,
+                      width: 14, height: 14, borderRadius: "50%",
+                      background: "#fff", transition: "left 0.2s",
+                    }} />
+                  </div>
+                  🔁 Loop diário
+                </label>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={onClose} className="btn btn-ghost" disabled={scheduling}>Cancelar</button>
