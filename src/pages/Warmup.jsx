@@ -63,8 +63,7 @@ export default function Warmup() {
 
   // ─── Config de agendamento Drive ─────────────────────────────────────────────
   const nowLocalStr = () => {
-    const d = new Date();
-    d.setMinutes(d.getMinutes() + 15);
+    const d = new Date(Date.now() + 15 * 60 * 1000);
     const pad = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
