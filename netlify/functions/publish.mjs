@@ -264,9 +264,9 @@ export const handler = async (event) => {
   console.log(`[publish] batch ${batch_offset}-${batch_offset + batch.length - 1} de ${accounts.length} conta(s) — sequencial com delay`);
 
   // Publica sequencialmente com delay aleatório entre contas (anti-shadowban).
-  // Evita que o Instagram detecte padrão de publicação em massa simultânea.
-  const DELAY_MIN_MS = parseInt(process.env.INTER_ACCOUNT_DELAY_MIN || "8000");   // 8s padrão
-  const DELAY_MAX_MS = parseInt(process.env.INTER_ACCOUNT_DELAY_MAX || "20000");  // 20s padrão
+  // 3-8s é suficiente para evitar detecção de massa e cabe folgado no timeout da Netlify.
+  const DELAY_MIN_MS = parseInt(process.env.INTER_ACCOUNT_DELAY_MIN || "3000");  // 3s padrão
+  const DELAY_MAX_MS = parseInt(process.env.INTER_ACCOUNT_DELAY_MAX || "8000");  // 8s padrão
 
   const results = [];
   for (let i = 0; i < batch.length; i++) {
