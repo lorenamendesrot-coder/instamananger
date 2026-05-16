@@ -432,6 +432,28 @@ export default function Queue() {
   );
 }
 
+// ─── Helpers de cor por status ────────────────────────────────────────────────
+function statusStyle(status) {
+  if (status === "done")    return { color: "var(--success)", bg: "rgba(34,197,94,0.10)",  border: "rgba(34,197,94,0.25)",  icon: "✅" };
+  if (status === "error")   return { color: "var(--danger)",  bg: "rgba(239,68,68,0.10)",  border: "rgba(239,68,68,0.25)",  icon: "❌" };
+  if (status === "running") return { color: "var(--warning)", bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.25)", icon: "⟳"  };
+  return                           { color: "var(--info)",    bg: "rgba(56,189,248,0.10)", border: "rgba(56,189,248,0.25)", icon: "⏳" };
+}
+
+// ─── Avatar pequeno de conta ───────────────────────────────────────────────────
+function AccAvatar({ acc, size = 20 }) {
+  return (
+    <div style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0, overflow: "hidden", border: "1px solid var(--border2)" }}>
+      {acc.profile_picture
+        ? <img src={acc.profile_picture} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            onError={e => { e.target.style.display = "none"; }} />
+        : <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg,var(--accent),#9b4dfc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.4, color: "#fff", fontWeight: 700 }}>
+            {(acc.username || "?")[0].toUpperCase()}
+          </div>}
+    </div>
+  );
+}
+
 // ─── QueueList ────────────────────────────────────────────────────────────────
 function QueueList({ items, filterDay, vfByParent, paByHistory, activeVfParentIds, onEdit, onRemove, onForce, forcingId, selecting, selected, onToggleSelect }) {
   const groups = useMemo(() => {
@@ -446,141 +468,282 @@ function QueueList({ items, filterDay, vfByParent, paByHistory, activeVfParentId
   }, [items, filterDay]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {groups.map((group, gi) => (
         <div key={gi}>
           {group.label && (
-            <div style={{display:"flex",alignItems:"center",gap:8,margin:gi>0?"14px 0 8px":"0 0 8px"}}>
-              <div style={{flex:1,height:1,background:"var(--border)"}} />
-              <span style={{fontSize:11,fontWeight:700,color:"var(--muted)",padding:"2px 10px",borderRadius:10,background:"var(--bg2)",border:"1px solid var(--border)",whiteSpace:"nowrap"}}>
-                📅 {group.label} — {group.items.length} post(s)
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: gi > 0 ? "18px 0 10px" : "0 0 10px" }}>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", padding: "3px 12px", borderRadius: 20, background: "var(--bg2)", border: "1px solid var(--border)", whiteSpace: "nowrap", letterSpacing: "0.03em" }}>
+                📅 {group.label} — {group.items.length} post{group.items.length !== 1 ? "s" : ""}
               </span>
-              <div style={{flex:1,height:1,background:"var(--border)"}} />
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
             </div>
           )}
-          {group.items.map(item => (
-            <QueueItem key={item.id} item={item} vfItems={vfByParent[item.id]} paItems={paByHistory?.[item.historyId]} hasActiveVf={activeVfParentIds?.has(item.id)}
-              onEdit={onEdit} onRemove={onRemove} onForce={onForce} forcingId={forcingId} selecting={selecting} isSelected={selected?.has(item.id)} onToggleSelect={onToggleSelect} />
-          ))}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {group.items.map(item => (
+              <QueueItem key={item.id} item={item}
+                vfItems={vfByParent[item.id]}
+                paItems={paByHistory?.[item.historyId]}
+                hasActiveVf={activeVfParentIds?.has(item.id)}
+                onEdit={onEdit} onRemove={onRemove} onForce={onForce}
+                forcingId={forcingId} selecting={selecting}
+                isSelected={selected?.has(item.id)} onToggleSelect={onToggleSelect} />
+            ))}
+          </div>
         </div>
       ))}
     </div>
   );
 }
 
-// ─── QueueItem ────────────────────────────────────────────────────────────────
+// ─── QueueItem — card redesenhado ─────────────────────────────────────────────
 function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onForce, forcingId, selecting, isSelected, onToggleSelect }) {
+  const [expanded, setExpanded] = useState(false);
+
   const isGroup     = item.type === "group";
   const paTotal     = paItems?.length || 0;
-  const paDone      = paItems?.filter(p=>p.status==="done"||p.status==="error").length || 0;
-  const paRunning   = paItems?.filter(p=>p.status==="running").length || 0;
-  const hasActivePa = paItems?.some(p=>p.status==="pending"||p.status==="running");
-  const isPublishingVideos = (item.status==="done"||item.status==="running") && (hasActiveVf||hasActivePa);
-  const effectiveStatus    = isPublishingVideos?"running":item.status;
-  const info               = STATUS_INFO[effectiveStatus]||STATUS_INFO.pending;
-  const scheduledDate      = new Date(item.scheduledAt);
-  const isPast             = item.scheduledAt < Date.now();
-  const thumbUrl           = item.mediaType==="IMAGE"?item.mediaUrl:null;
-  const mediaCount         = item.mediaUrls?.length||1;
-  const qty                = item.quantityPerCycle||1;
+  const paDone      = paItems?.filter(p => p.status === "done" || p.status === "error").length || 0;
+  const paRunning   = paItems?.filter(p => p.status === "running").length || 0;
+  const hasActivePa = paItems?.some(p => p.status === "pending" || p.status === "running");
+
+  const isPublishing    = (item.status === "done" || item.status === "running") && (hasActiveVf || hasActivePa);
+  const effectiveStatus = isPublishing ? "running" : item.status;
+  const ss              = statusStyle(effectiveStatus);
+
+  const scheduledDate = new Date(item.scheduledAt);
+  const isPast        = item.scheduledAt < Date.now() && item.status === "pending";
+  const mediaCount    = item.mediaUrls?.length || 1;
+  const qty           = item.quantityPerCycle || 1;
+  const thumbUrl      = item.mediaType === "IMAGE" ? item.mediaUrl : null;
+
+  // Resultados
+  const results  = item.results || [];
+  const resOk    = results.filter(r => r.success);
+  const resFail  = results.filter(r => !r.success && !r.retrying);
+  const resRetry = results.filter(r => !r.success && r.retrying);
+  const hasResults = results.length > 0;
+
+  // Progresso de publicação em curso
+  const vfDone  = (vfItems  || []).filter(v => v.status === "done").length;
+  const vfTotal = (vfItems  || []).length;
+
+  // Sub-items para exibir (vf ou pa, o que for mais relevante)
+  const subItems = isGroup && paItems?.length
+    ? paItems.map(pa => ({ username: pa.username, status: pa.status, error: pa.error && !pa.skippedForRetry ? pa.error : null, label: pa.awaitingVideoFinish ? "🎬 processando" : null, retrying: pa.skippedForRetry }))
+    : (vfItems || []).map(vf => ({ username: vf.username, status: vf.status, error: vf.error || null, attempts: vf.attempts, label: null }));
+
+  const hasSubItems = subItems.length > 0;
+
+  // Contas — colapsa se muitas
+  const accs        = item.accounts || [];
+  const visibleAccs = accs.slice(0, 6);
+  const hiddenAccs  = accs.length - 6;
 
   return (
-    <div style={{background:isSelected?"rgba(124,92,252,0.1)":info.bg,border:`1px solid ${isSelected?"var(--accent)":info.color+"28"}`,borderLeft:`3px solid ${isSelected?"var(--accent)":info.color}`,borderRadius:10,padding:"10px 12px",cursor:selecting?"pointer":"default",transition:"all 0.12s"}} onClick={selecting?()=>onToggleSelect(item.id):undefined}>
-      <div style={{display:"flex",alignItems:"center",gap:10}}>
-        {selecting && <div style={{width:20,height:20,borderRadius:5,flexShrink:0,border:`2px solid ${isSelected?"var(--accent)":"var(--border2)"}`,background:isSelected?"var(--accent)":"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.12s"}}>{isSelected&&<span style={{color:"#fff",fontSize:12,fontWeight:900}}>✓</span>}</div>}
-        {thumbUrl ? (
-          <img src={thumbUrl} alt="" style={{width:40,height:40,borderRadius:7,objectFit:"cover",flexShrink:0,border:"1px solid var(--border)"}} onError={e=>{e.target.style.display="none";}} />
-        ) : (
-          <div style={{width:40,height:40,borderRadius:7,background:"var(--bg3)",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,position:"relative"}}>
-            🎬
-            {mediaCount>1 && <span style={{position:"absolute",top:-4,right:-4,background:"var(--accent)",color:"#fff",fontSize:9,fontWeight:700,borderRadius:8,padding:"1px 4px"}}>×{mediaCount}</span>}
+    <div style={{
+      borderRadius: 12,
+      border: `1px solid ${isSelected ? "var(--accent)" : ss.border}`,
+      borderLeft: `3px solid ${isSelected ? "var(--accent)" : ss.color}`,
+      background: isSelected ? "rgba(124,92,252,0.07)" : "var(--bg2)",
+      overflow: "hidden",
+      transition: "all 0.15s",
+      cursor: selecting ? "pointer" : "default",
+    }} onClick={selecting ? () => onToggleSelect(item.id) : undefined}>
+
+      {/* ── Linha principal ── */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px" }}>
+
+        {/* Checkbox seleção */}
+        {selecting && (
+          <div style={{ width: 18, height: 18, borderRadius: 4, flexShrink: 0, border: `2px solid ${isSelected ? "var(--accent)" : "var(--border2)"}`, background: isSelected ? "var(--accent)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {isSelected && <span style={{ color: "#fff", fontSize: 10, fontWeight: 900 }}>✓</span>}
           </div>
         )}
 
-        <div style={{flex:1,minWidth:0}}>
-          <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:4,flexWrap:"wrap"}}>
-            <span style={{fontSize:11,fontWeight:700,color:info.color}}>
-              {isPublishingVideos&&isGroup?<>⟳ PUBLICANDO <span style={{fontWeight:400,opacity:0.8}}>{paDone}/{paTotal} contas{paRunning>0?` (${paRunning} agora)`:""}</span></>:isPublishingVideos?<>⟳ PUBLICANDO VÍDEOS <span style={{fontWeight:400,opacity:0.8}}>{(vfItems||[]).filter(v=>v.status==="done").length}/{(vfItems||[]).length}</span></>:<>{effectiveStatus==="running"?"⟳ ":""}{info.label.toUpperCase()}</>}
+        {/* Thumbnail / ícone */}
+        <div style={{ width: 44, height: 44, borderRadius: 8, flexShrink: 0, overflow: "hidden", background: "var(--bg3)", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", border: "1px solid var(--border)" }}>
+          {thumbUrl
+            ? <img src={thumbUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
+            : <span style={{ fontSize: 20 }}>🎬</span>}
+          {mediaCount > 1 && (
+            <span style={{ position: "absolute", bottom: 2, right: 2, background: "rgba(0,0,0,0.7)", color: "#fff", fontSize: 8, fontWeight: 700, borderRadius: 4, padding: "1px 3px" }}>×{mediaCount}</span>
+          )}
+        </div>
+
+        {/* Corpo central */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+
+          {/* Linha 1: status + tipo + horário */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+            {/* Badge de status */}
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: ss.bg, color: ss.color, border: `1px solid ${ss.border}`, letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
+              {isPublishing && isGroup
+                ? <>{ss.icon} Publicando {paDone}/{paTotal}{paRunning > 0 ? ` · ${paRunning} agora` : ""}</>
+                : isPublishing
+                  ? <>{ss.icon} Publicando vídeos {vfDone}/{vfTotal}</>
+                  : <>{ss.icon} {effectiveStatus === "done" ? "Publicado" : effectiveStatus === "error" ? "Erro" : effectiveStatus === "running" ? "Rodando" : "Agendado"}</>}
             </span>
-            <span style={{fontSize:10,color:"var(--muted)",background:"var(--bg3)",padding:"1px 6px",borderRadius:4}}>{item.postType}</span>
-            <span style={{fontSize:10,color:"var(--muted)"}}>{item.mediaType==="IMAGE"?"🖼":"🎬"}</span>
-            {qty>1 && <span style={{fontSize:9,fontWeight:700,color:"var(--accent-light)",background:"#7c5cfc20",border:"1px solid var(--accent)",padding:"0 5px",borderRadius:8}}>×{qty}/ciclo</span>}
-            {item.loop && <span style={{fontSize:10,color:"var(--accent-light)"}}>🔁</span>}
-            {item.runCount>0 && <span style={{fontSize:9,color:"var(--muted)"}}>run×{item.runCount}</span>}
-            <span style={{fontSize:10,marginLeft:"auto",color:isPast&&item.status==="pending"?"var(--warning)":"var(--muted)",fontWeight:isPast&&item.status==="pending"?700:400}}>
-              🕐 {scheduledDate.toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}{isPast&&item.status==="pending"&&" ⚠"}
+
+            {/* Tipo de post */}
+            <span style={{ fontSize: 10, color: "var(--muted)", background: "var(--bg3)", border: "1px solid var(--border)", padding: "2px 7px", borderRadius: 20, whiteSpace: "nowrap" }}>
+              {item.mediaType === "IMAGE" ? "🖼" : "🎬"} {item.postType}
+            </span>
+
+            {/* Badges extras */}
+            {qty > 1 && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent-light)", background: "rgba(124,92,252,0.12)", border: "1px solid rgba(124,92,252,0.3)", padding: "2px 6px", borderRadius: 20 }}>×{qty}/ciclo</span>}
+            {item.loop && <span style={{ fontSize: 10, color: "var(--accent-light)", background: "rgba(124,92,252,0.08)", border: "1px solid rgba(124,92,252,0.2)", padding: "2px 6px", borderRadius: 20 }}>🔁 loop</span>}
+            {item.runCount > 0 && <span style={{ fontSize: 9, color: "var(--muted)" }}>×{item.runCount} runs</span>}
+
+            {/* Horário — empurrado para direita */}
+            <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: isPast ? 700 : 500, color: isPast ? "var(--warning)" : "var(--muted)", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
+              🕐 {scheduledDate.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+              {isPast && <span style={{ color: "var(--warning)", fontSize: 12 }}>⚠</span>}
             </span>
           </div>
 
-          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:2}}>
-            {(item.accounts||[]).slice(0,8).map((a,i) => (
-              <div key={a.id||i} style={{display:"flex",alignItems:"center",gap:4,background:"var(--bg3)",border:"1px solid var(--border)",borderRadius:20,padding:"2px 7px 2px 3px"}}>
-                {a.profile_picture?<img src={a.profile_picture} alt="" style={{width:16,height:16,borderRadius:"50%",objectFit:"cover",flexShrink:0}} />:<div style={{width:16,height:16,borderRadius:"50%",background:"linear-gradient(135deg,var(--accent),#9b4dfc)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,color:"#fff",fontWeight:700,flexShrink:0}}>{(a.username||"?")[0].toUpperCase()}</div>}
-                <span style={{fontSize:10,fontWeight:600,color:"var(--text)",whiteSpace:"nowrap"}}>@{a.username||"—"}</span>
+          {/* Linha 2: avatares das contas */}
+          <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+            {visibleAccs.map((a, i) => (
+              <div key={a.id || i} style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 20, padding: "2px 8px 2px 4px" }}>
+                <AccAvatar acc={a} size={18} />
+                <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text2)", whiteSpace: "nowrap" }}>@{a.username || "—"}</span>
               </div>
             ))}
-            {(item.accounts||[]).length>8 && <span style={{fontSize:10,color:"var(--muted)",fontWeight:600}}>+{item.accounts.length-8} conta(s)</span>}
-            <span style={{fontSize:10,color:"var(--muted)",marginLeft:"auto",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:160}}>{mediaCount>1?`${mediaCount} mídias`:item.mediaUrl?.split("/").pop()?.slice(0,35)}</span>
+            {hiddenAccs > 0 && (
+              <span style={{ fontSize: 10, color: "var(--muted)", background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 20, padding: "2px 8px" }}>
+                +{hiddenAccs} conta{hiddenAccs !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
 
-          {item.error && <div style={{fontSize:10,color:"var(--danger)",marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>✗ {item.error}</div>}
-
-          {vfItems?.length>0 && (
-            <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:6}}>
-              {vfItems.map((vf,i)=>{
-                const vfColor=vf.status==="done"?"var(--success)":vf.status==="error"?"var(--danger)":vf.status==="running"?"var(--warning)":"var(--info)";
-                const vfBg=vf.status==="done"?"rgba(34,197,94,0.08)":vf.status==="error"?"rgba(239,68,68,0.08)":vf.status==="running"?"rgba(245,158,11,0.08)":"rgba(56,189,248,0.08)";
-                const vfIcon=vf.status==="done"?"✅":vf.status==="error"?"❌":vf.status==="running"?"⟳":"⏳";
-                return <div key={i} title={vf.error||""} style={{fontSize:10,padding:"2px 7px",borderRadius:20,background:vfBg,color:vfColor,border:`1px solid ${vfColor}40`,display:"flex",alignItems:"center",gap:4}}><span>{vfIcon}</span><span>@{vf.username}</span>{vf.attempts>0&&<span style={{opacity:0.65}}>×{vf.attempts+1}</span>}{vf.error&&<span style={{maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{" — "}{vf.error}</span>}</div>;
-              })}
+          {/* Erro de item (quando o próprio post falhou) */}
+          {item.error && effectiveStatus === "error" && (
+            <div style={{ marginTop: 6, fontSize: 11, color: "var(--danger)", background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 6, padding: "4px 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              ✗ {item.error}
             </div>
           )}
-
-          {isGroup&&paItems?.length>0 && (
-            <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:6}}>
-              {paItems.map((pa,i)=>{
-                const paColor=pa.status==="done"?"var(--success)":pa.status==="error"?"var(--danger)":pa.status==="running"?"var(--warning)":"var(--info)";
-                const paBg=pa.status==="done"?"rgba(34,197,94,0.08)":pa.status==="error"?"rgba(239,68,68,0.08)":pa.status==="running"?"rgba(245,158,11,0.08)":"rgba(56,189,248,0.08)";
-                const paIcon=pa.status==="done"?(pa.awaitingVideoFinish?"🎬":"✅"):pa.status==="error"?"❌":pa.status==="running"?"⟳":"⏳";
-                return <div key={i} title={pa.error||(pa.awaitingVideoFinish?"Aguardando processamento do vídeo":"")} style={{fontSize:10,padding:"2px 7px",borderRadius:20,background:paBg,color:paColor,border:`1px solid ${paColor}40`,display:"flex",alignItems:"center",gap:4}}><span>{paIcon}</span><span>@{pa.username}</span>{pa.error&&!pa.skippedForRetry&&<span style={{maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{" — "}{pa.error}</span>}{pa.skippedForRetry&&<span style={{opacity:0.65}}> retry↻</span>}</div>;
-              })}
-            </div>
-          )}
-
-          {item.results?.length>0 && (()=>{
-            const ok=item.results.filter(r=>r.success), retrying=item.results.filter(r=>!r.success&&r.retrying), fail=item.results.filter(r=>!r.success&&!r.retrying);
-            return (
-              <div style={{marginTop:8,borderTop:"1px solid var(--border)",paddingTop:8}}>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
-                  <span style={{fontSize:10,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Resultado</span>
-                  {ok.length>0&&<span style={{fontSize:11,fontWeight:700,color:"var(--success)",background:"rgba(34,197,94,0.1)",border:"1px solid rgba(34,197,94,0.3)",borderRadius:20,padding:"1px 8px"}}>✅ {ok.length} publicado{ok.length>1?"s":""}</span>}
-                  {retrying.length>0&&<span style={{fontSize:11,fontWeight:700,color:"var(--warning)",background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:20,padding:"1px 8px"}}>↻ {retrying.length} retry</span>}
-                  {fail.length>0&&<span style={{fontSize:11,fontWeight:700,color:"var(--danger)",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:20,padding:"1px 8px"}}>❌ {fail.length} falhou{fail.length>1?"ram":""}</span>}
-                  <span style={{fontSize:10,color:"var(--muted)",marginLeft:"auto"}}>{ok.length+fail.length+retrying.length}/{item.accounts?.length||"?"} contas</span>
-                </div>
-                <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                  {item.results.map((r,i)=>{
-                    const isRetrying=!r.success&&r.retrying;
-                    return (
-                      <div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:10,padding:"3px 8px",borderRadius:6,background:r.success?"rgba(34,197,94,0.06)":isRetrying?"rgba(245,158,11,0.06)":"rgba(239,68,68,0.06)",border:`1px solid ${r.success?"rgba(34,197,94,0.2)":isRetrying?"rgba(245,158,11,0.2)":"rgba(239,68,68,0.2)"}`}}>
-                        <span style={{fontSize:12}}>{r.success?"✅":isRetrying?"↻":"❌"}</span>
-                        <span style={{fontWeight:700,color:"var(--text)",minWidth:90}}>@{r.username}</span>
-                        {r.success?<><span style={{color:"var(--success)",fontWeight:600}}>Publicado</span>{r.published_at&&<span style={{color:"var(--muted)",marginLeft:"auto"}}>{new Date(r.published_at).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>}{r.media_id&&<a href={`https://www.instagram.com/p/${r.media_id}/`} target="_blank" rel="noopener noreferrer" style={{color:"var(--accent-light)",marginLeft:4,textDecoration:"none",fontWeight:600}} title="Ver no Instagram">↗</a>}</>:isRetrying?<span style={{color:"var(--warning)",fontStyle:"italic"}}>Retry em andamento…</span>:<span style={{color:"var(--danger)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:220}}>{r.error||"Erro desconhecido"}</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
         </div>
 
-        <div style={{display:"flex",gap:4,flexShrink:0}}>
-          {(item.status==="pending"||item.status==="error")&&<button className="btn btn-ghost btn-xs" onClick={()=>onForce(item)} title="Publicar agora" disabled={forcingId===item.id} style={{padding:"4px 8px",fontSize:12,color:"var(--warning)"}}>{forcingId===item.id?"⟳":"⚡"}</button>}
-          {(item.status==="pending"||item.status==="error")&&<button className="btn btn-ghost btn-xs" onClick={()=>onEdit(item)} title="Editar" style={{padding:"4px 8px",fontSize:12}}>✎</button>}
-          <button className="btn btn-ghost btn-xs" style={{color:"var(--danger)",padding:"4px 8px",fontSize:12}} onClick={()=>onRemove(item.id)} title="Remover">✕</button>
+        {/* Ações — direita */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0, alignItems: "flex-end" }}>
+          <div style={{ display: "flex", gap: 4 }}>
+            {(item.status === "pending" || item.status === "error") && (
+              <button title="Publicar agora" disabled={forcingId === item.id}
+                onClick={e => { e.stopPropagation(); onForce(item); }}
+                style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid rgba(245,158,11,0.3)", background: "rgba(245,158,11,0.08)", color: "var(--warning)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {forcingId === item.id ? <span className="spinner" style={{ width: 10, height: 10 }} /> : "⚡"}
+              </button>
+            )}
+            {(item.status === "pending" || item.status === "error") && (
+              <button title="Editar horário"
+                onClick={e => { e.stopPropagation(); onEdit(item); }}
+                style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg3)", color: "var(--muted)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                ✎
+              </button>
+            )}
+            <button title="Remover"
+              onClick={e => { e.stopPropagation(); onRemove(item.id); }}
+              style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "var(--danger)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              ✕
+            </button>
+          </div>
+
+          {/* Botão expandir — só aparece se há subItems ou resultados */}
+          {(hasSubItems || hasResults) && (
+            <button onClick={e => { e.stopPropagation(); setExpanded(p => !p); }}
+              style={{ fontSize: 10, color: "var(--muted)", background: "none", border: "none", cursor: "pointer", padding: "2px 4px", display: "flex", alignItems: "center", gap: 3 }}>
+              {expanded ? "▲ ocultar" : `▼ detalhes (${hasResults ? results.length : subItems.length})`}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* ── Seção expandida: sub-items (per_account / video_finish) ── */}
+      {expanded && hasSubItems && !hasResults && (
+        <div style={{ borderTop: "1px solid var(--border)", padding: "10px 14px", background: "var(--bg3)" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+            Progresso por conta
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 5 }}>
+            {subItems.map((sub, i) => {
+              const s = statusStyle(sub.status);
+              return (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderRadius: 7, background: s.bg, border: `1px solid ${s.border}` }}>
+                  <span style={{ fontSize: 12, flexShrink: 0 }}>{sub.label ? "🎬" : s.icon}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    @{sub.username}
+                  </span>
+                  {sub.retrying && <span style={{ fontSize: 9, color: "var(--warning)" }}>retry</span>}
+                  {sub.attempts > 0 && <span style={{ fontSize: 9, color: "var(--muted)", flexShrink: 0 }}>×{sub.attempts + 1}</span>}
+                  {sub.error && (
+                    <span title={sub.error} style={{ fontSize: 9, color: s.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 100, flexShrink: 0 }}>
+                      {sub.error.length > 28 ? sub.error.slice(0, 28) + "…" : sub.error}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Seção de resultados finais ── */}
+      {expanded && hasResults && (
+        <div style={{ borderTop: "1px solid var(--border)", background: "var(--bg3)" }}>
+          {/* Barra de resumo */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Resultado</span>
+            {resOk.length > 0 && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--success)", background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 20, padding: "2px 10px" }}>
+                ✅ {resOk.length} publicado{resOk.length > 1 ? "s" : ""}
+              </span>
+            )}
+            {resRetry.length > 0 && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--warning)", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 20, padding: "2px 10px" }}>
+                ↻ {resRetry.length} retry
+              </span>
+            )}
+            {resFail.length > 0 && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--danger)", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 20, padding: "2px 10px" }}>
+                ❌ {resFail.length} falhou{resFail.length > 1 ? "ram" : ""}
+              </span>
+            )}
+            <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--muted)" }}>
+              {results.length}/{accs.length || "?"} contas
+            </span>
+          </div>
+
+          {/* Grid de resultados por conta */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 5, padding: "0 14px 12px" }}>
+            {results.map((r, i) => {
+              const isRetrying = !r.success && r.retrying;
+              const rs = r.success ? statusStyle("done") : isRetrying ? statusStyle("running") : statusStyle("error");
+              return (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8, background: rs.bg, border: `1px solid ${rs.border}` }}>
+                  <span style={{ fontSize: 14, flexShrink: 0 }}>{r.success ? "✅" : isRetrying ? "⟳" : "❌"}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>@{r.username}</div>
+                    {r.success ? (
+                      <div style={{ fontSize: 10, color: "var(--success)", display: "flex", alignItems: "center", gap: 4 }}>
+                        Publicado
+                        {r.published_at && <span style={{ color: "var(--muted)" }}>{new Date(r.published_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>}
+                        {r.media_id && <a href={`https://www.instagram.com/p/${r.media_id}/`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent-light)", fontWeight: 700 }} title="Ver no Instagram">↗</a>}
+                      </div>
+                    ) : isRetrying ? (
+                      <div style={{ fontSize: 10, color: "var(--warning)", fontStyle: "italic" }}>Retry em andamento…</div>
+                    ) : (
+                      <div style={{ fontSize: 10, color: "var(--danger)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.error}>
+                        {r.error || "Erro desconhecido"}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
