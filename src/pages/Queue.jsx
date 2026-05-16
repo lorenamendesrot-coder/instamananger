@@ -527,46 +527,12 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
     : (vfItems || []).map(vf => ({ username: vf.username, status: vf.status, error: vf.error || null, attempts: vf.attempts, label: null }));
 
   const hasSubItems = subItems.length > 0;
+  const canExpand   = hasSubItems || hasResults;
 
   // Contas — colapsa se muitas
   const accs        = item.accounts || [];
   const visibleAccs = accs.slice(0, 6);
   const hiddenAccs  = accs.length - 6;
-
-  const isGroup     = item.type === "group";
-  const paTotal     = paItems?.length || 0;
-  const paDone      = paItems?.filter(p => p.status === "done" || p.status === "error").length || 0;
-  const paRunning   = paItems?.filter(p => p.status === "running").length || 0;
-  const hasActivePa = paItems?.some(p => p.status === "pending" || p.status === "running");
-  const allPaDone   = paTotal > 0 && paDone >= paTotal;
-
-  const isPublishing    = (item.status === "done" || item.status === "running") && (hasActiveVf || hasActivePa) && !allPaDone;
-  const effectiveStatus = isPublishing ? "running" : item.status;
-  const isOverdue = item.status === "pending" && item.scheduledAt < Date.now() && !item.runCount;
-  const ss = isOverdue
-    ? { color: "var(--warning)", bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.30)", icon: "⚠" }
-    : statusStyle(effectiveStatus);
-
-  const scheduledDate = new Date(item.scheduledAt);
-  const isPast        = isOverdue;
-  const mediaCount    = item.mediaUrls?.length || 1;
-  const qty           = item.quantityPerCycle || 1;
-
-  const results  = item.results || [];
-  const resOk    = results.filter(r => r.success);
-  const resFail  = results.filter(r => !r.success && !r.retrying);
-  const hasResults = results.length > 0;
-
-  const vfDone  = (vfItems || []).filter(v => v.status === "done").length;
-  const vfTotal = (vfItems || []).length;
-
-  const subItems = isGroup && paItems?.length
-    ? paItems.map(pa => ({ username: pa.username, status: pa.status, error: pa.error && !pa.skippedForRetry ? pa.error : null, retrying: pa.skippedForRetry }))
-    : (vfItems || []).map(vf => ({ username: vf.username, status: vf.status, error: vf.error || null, attempts: vf.attempts }));
-
-  const hasSubItems = subItems.length > 0;
-  const canExpand   = hasSubItems || hasResults;
-  const accs        = item.accounts || [];
 
   // Badge de status label
   let statusLabel = "Agendado";
