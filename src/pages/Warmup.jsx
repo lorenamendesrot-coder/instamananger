@@ -56,6 +56,7 @@ export default function Warmup() {
   const [queue,        setQueue]        = useState([]);
   const [saving,       setSaving]       = useState(false);
   const [saved,        setSaved]        = useState(false);
+  const [saveCount,    setSaveCount]    = useState(0);
   const [dbQueue,      setDbQueue]      = useState([]);
   const [tab,          setTab]          = useState("upload");
   const [syncingNames, setSyncingNames] = useState(false);
@@ -202,7 +203,7 @@ export default function Warmup() {
   const reelFiles      = (files.reels || []).filter((f) => f.file);
   const parsedCaptions = useMemo(() => bulkCaptions.split("\n").map((l) => l.trim()).filter(Boolean), [bulkCaptions]);
 
-  const generateQueue = useCallback(() => {
+  const generateQueue = useCallback(async () => {
     const currentFiles = filesRef.current;
     const totalDone = ["reels","feed","stories"].reduce((s, t) => s + (currentFiles[t]||[]).filter(f=>f.status==="done").length, 0);
     if (!totalDone) { alert("Adicione pelo menos 1 URL de mídia antes de gerar a fila."); return; }
@@ -276,11 +277,22 @@ export default function Warmup() {
       generated = slots;
     }
 
-    if (!generated.length) { alert("Nenhum post gerado. Verifique se há mídias prontas compatíveis com os tipos configurados."); return; }
+    if (!generated.length) { alert("Nenhum post gerado. Verifique se há mídias prontas."); return; }
+
+    // Salva diretamente — sem etapa de preview
     setQueue(generated);
-    setSaved(false);
-    // fila gerada
-  }, [selectedAccounts, parsedCaptions, captionMode, driveStartTime, driveGapMinutes, driveJitterMin, drivePostType, driveCaption]);
+    setSaving(true);
+    try {
+      await addBatch(generated);
+      window.dispatchEvent(new CustomEvent("sw:queue-update"));
+      setSaved(true);
+      setSaveCount(generated.length);
+    } catch (err) {
+      alert(`Erro ao agendar: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [selectedAccounts, parsedCaptions, captionMode, driveStartTime, driveGapMinutes, driveJitterMin, drivePostType, driveCaption, addBatch]);
 
   const cancelWarmupQueue = useCallback(async () => {
     if (!window.confirm("Cancelar toda a fila de aquecimento pendente? Posts já publicados não serão desfeitos.")) return;
@@ -827,17 +839,39 @@ export default function Warmup() {
 
           {/* Blocos exclusivos do modo Preset */}
 
+          {/* Feedback de agendado */}
+          {saved && saveCount > 0 && (
+            <div style={{ padding:"14px 16px", borderRadius:10, background:"rgba(34,197,94,0.08)", border:"1px solid rgba(34,197,94,0.25)", display:"flex", alignItems:"center", gap:12 }}>
+              <span style={{ fontSize:22 }}>✅</span>
+              <div style={{ flex:1 }}>
+                <div style={{ fontWeight:700, fontSize:14, color:"var(--success)" }}>
+                  {saveCount} post{saveCount !== 1 ? "s" : ""} agendado{saveCount !== 1 ? "s" : ""}!
+                </div>
+                <div style={{ fontSize:11, color:"var(--muted)", marginTop:2 }}>O scheduler publicará automaticamente nos horários configurados.</div>
+              </div>
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ color:"var(--danger)", borderColor:"rgba(239,68,68,0.3)", flexShrink:0 }}
+                onClick={cancelWarmupQueue}
+              >🗑 Cancelar fila</button>
+            </div>
+          )}
+
           <button
             className="btn btn-primary"
             onClick={generateQueue}
-            disabled={!selectedAccounts.length || !stats.totalDone}
+            disabled={saving || !selectedAccounts.length || !stats.totalDone}
             style={{ width: "100%", padding: "14px", fontSize: 14 }}
           >
-            {!stats.totalDone
-              ? "📎 Adicione URLs de mídias primeiro"
-              : !selectedAccounts.length
-                ? "👥 Nenhuma conta elegível"
-                : `🚀 Gerar Fila — ${selectedAccounts.length} conta(s)`}
+            {saving
+              ? <><span className="spinner" style={{ width:14, height:14, borderTopColor:"#fff", display:"inline-block", marginRight:8 }} />Agendando...</>
+              : !stats.totalDone
+                ? "📎 Adicione URLs de mídias primeiro"
+                : !selectedAccounts.length
+                  ? "👥 Nenhuma conta elegível"
+                  : saved
+                    ? `🔄 Reagendar — ${selectedAccounts.length} conta(s)`
+                    : `🚀 Gerar e Agendar — ${selectedAccounts.length} conta(s)`}
           </button>
 
           <div style={{ padding: "12px 16px", borderRadius: 10, background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.15)", fontSize: 11, color: "var(--muted)" }}>
