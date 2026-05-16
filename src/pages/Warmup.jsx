@@ -63,7 +63,8 @@ export default function Warmup() {
 
   // ─── Config de agendamento Drive ─────────────────────────────────────────────
   const nowLocalStr = () => {
-    const d = new Date(Date.now() + 15 * 60 * 1000);
+    const d = new Date();
+    d.setMinutes(d.getMinutes() + 15);
     const pad = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
@@ -73,6 +74,10 @@ export default function Warmup() {
   const [driveJitterMin,  setDriveJitterMin]  = useState(10);
   const [driveCaption,    setDriveCaption]    = useState("");
   const [driveLoop,       setDriveLoop]       = useState(false);
+
+  // ─── Estado de importação do Drive (elevado para sobreviver à troca de aba) ──
+  const [driveImportState, setDriveImportState] = useState(null);
+  // null | { total, current, currentName, done, error }
 
   // Contas que passam no filtro de dias
   const eligibleAccounts = useMemo(
@@ -210,48 +215,71 @@ export default function Warmup() {
 
     let generated;
 
-    if (configMode === "target") {
-      // Modo target: gera dias sintéticos baseados na meta
-      const { reels, feed, stories, periodHours, days, windowStart, windowEnd } = targetConfig;
-      const totalT = reels + feed + stories;
-            const syntheticDays = Array.from({ length: days }, (_, i) => ({
-        day: i + 1,
-        label: `Dia ${i + 1}`,
-        reels, feed, stories,
-        windowStart, windowEnd,
-        intervalMinMin: 60,
-        intervalMinMax: 120,
-        targetMode: true,
-        targetCount: totalT,
-        targetPeriodHours: periodHours,
-      }));
-      generated = buildWarmupQueue({
-        accounts: selectedAccounts, mediaByType,
-        captions: parsedCaptions, captionMode,
-        preset: { ...WARMUP_PRESET_2D, days: syntheticDays },
-        startDateStr: startDate, distribution,
-        loopEnabled: false, loopDays: 0,
-        thumbUrl,
-      });
-    } else {
-      // Modo preset (por dia)
-      const activeDays = dayConfig.filter((d) => selectedDays.includes(d.day));
-      if (!activeDays.length) { alert("Selecione pelo menos um dia para gerar a fila."); return; }
-      generated = buildWarmupQueue({
-        accounts: selectedAccounts, mediaByType,
-        captions: parsedCaptions, captionMode,
-        preset: { ...WARMUP_PRESET_2D, days: activeDays },
-        startDateStr: startDate, distribution,
-        loopEnabled, loopDays,
-        thumbUrl,
-      });
+    // ── Modo Drive: um slot por arquivo × conta, espaçados pelo intervalo ──
+    {
+      const MEDIA_TYPE_MAP = { REEL: "VIDEO", FEED: "IMAGE", STORY: "VIDEO" };
+      const allMedia = [
+        ...mediaByType.reels.map(m => ({ ...m, postType: "REEL",  mediaType: "VIDEO" })),
+        ...mediaByType.feed .map(m => ({ ...m, postType: "FEED",  mediaType: "IMAGE" })),
+        ...mediaByType.stories.map(m => ({ ...m, postType: "STORY", mediaType: "VIDEO" })),
+      ];
+
+      if (!allMedia.length) { alert("Nenhum arquivo com status 'done' encontrado. Aguarde o upload terminar."); return; }
+
+      const startMs    = new Date(driveStartTime).getTime();
+      const gapMs      = driveGapMinutes * 60 * 1000;
+      const jitterMs   = driveJitterMin  * 60 * 1000;
+      const postType   = drivePostType;
+      const mediaType  = MEDIA_TYPE_MAP[postType] || "VIDEO";
+
+      // Filtra só as mídias compatíveis com o postType escolhido
+      const pool = postType === "REEL"
+        ? mediaByType.reels
+        : postType === "FEED"
+          ? [...mediaByType.feed, ...mediaByType.reels]
+          : mediaByType.stories;
+
+      if (!pool.length) { alert(`Nenhum arquivo compatível com o tipo "${postType}". Adicione mídias na aba Upload.`); return; }
+
+      const slots = [];
+      let slotIdx = 0;
+      for (const acc of selectedAccounts) {
+        for (let i = 0; i < pool.length; i++) {
+          const media = pool[i];
+          const jitter = jitterMs > 0 ? (Math.random() * 2 - 1) * jitterMs : 0;
+          const scheduledAt = startMs + slotIdx * gapMs + Math.round(jitter);
+          const caption = parsedCaptions.length ? parsedCaptions[slotIdx % parsedCaptions.length] : driveCaption;
+          slots.push({
+            id:            `drv-${acc.id}-${i}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            accountId:     acc.id,
+            username:      acc.username,
+            mediaUrl:      media.url,
+            mediaUrls:     [media.url],
+            mediaName:     media.name,
+            mediaType,
+            postType,
+            mediaCategory: postType === "REEL" ? "reels" : postType === "FEED" ? "feed" : "stories",
+            caption,
+            bulkCaptions:  parsedCaptions,
+            captionMode,
+            accounts:      [{ id: acc.id, username: acc.username, access_token: acc.access_token, page_id: acc.page_id || null }],
+            scheduledAt,
+            status:        "pending",
+            warmup:        true,
+            warmupDay:     1,
+            created_at:    new Date().toISOString(),
+          });
+          slotIdx++;
+        }
+      }
+      generated = slots;
     }
 
     if (!generated.length) { alert("Nenhum post gerado. Verifique se há mídias prontas compatíveis com os tipos configurados."); return; }
     setQueue(generated);
     setSaved(false);
     // fila gerada
-  }, [selectedAccounts, parsedCaptions, captionMode, dayConfig, selectedDays, startDate, distribution, loopEnabled, loopDays, configMode, targetConfig]);
+  }, [selectedAccounts, parsedCaptions, captionMode, driveStartTime, driveGapMinutes, driveJitterMin, drivePostType, driveCaption]);
 
   const cancelWarmupQueue = useCallback(async () => {
     if (!window.confirm("Cancelar toda a fila de aquecimento pendente? Posts já publicados não serão desfeitos.")) return;
@@ -331,6 +359,60 @@ export default function Warmup() {
         </div>
       </div>
 
+      {/* Banner global de importação do Drive — persiste entre abas */}
+      {driveImportState && (
+        <div style={{
+          marginBottom: 14, padding: "12px 16px", borderRadius: 10,
+          background: driveImportState.error
+            ? "rgba(239,68,68,0.08)" : "rgba(66,133,244,0.08)",
+          border: `1px solid ${driveImportState.error ? "rgba(239,68,68,0.3)" : "rgba(66,133,244,0.3)"}`,
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          {driveImportState.error ? (
+            <>
+              <span style={{ fontSize: 18 }}>⚠️</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "var(--danger)" }}>Erro ao importar do Drive</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{driveImportState.error}</div>
+              </div>
+              <button onClick={() => setDriveImportState(null)} style={{ background:"none", border:"none", color:"var(--muted)", cursor:"pointer", fontSize:16 }}>✕</button>
+            </>
+          ) : driveImportState.done ? (
+            <>
+              <span style={{ fontSize: 18 }}>✅</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "var(--success)" }}>
+                  {driveImportState.total} arquivo{driveImportState.total !== 1 ? "s" : ""} importado{driveImportState.total !== 1 ? "s" : ""} do Drive
+                </div>
+              </div>
+              <button onClick={() => setDriveImportState(null)} style={{ background:"none", border:"none", color:"var(--muted)", cursor:"pointer", fontSize:16 }}>✕</button>
+            </>
+          ) : (
+            <>
+              <span className="spinner" style={{ width: 16, height: 16, borderTopColor: "#4285f4", display: "inline-block", flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "#4285f4" }}>
+                  Importando do Google Drive — {driveImportState.current}/{driveImportState.total}
+                </div>
+                {driveImportState.currentName && (
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    📄 {driveImportState.currentName}
+                  </div>
+                )}
+                <div style={{ marginTop: 6, height: 4, borderRadius: 3, background: "var(--border2)", overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%", borderRadius: 3,
+                    width: `${driveImportState.total > 0 ? Math.round((driveImportState.current / driveImportState.total) * 100) : 0}%`,
+                    background: "linear-gradient(90deg, #4285f4, #34a853)",
+                    transition: "width 0.3s",
+                  }} />
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Tabs */}
       <div style={{ display: "flex", gap: 2, marginBottom: 24, background: "var(--bg2)", padding: 4, borderRadius: 12, width: "fit-content", overflowX: "auto" }}>
         {TABS.map(({ id, icon, label }) => (
@@ -393,6 +475,8 @@ export default function Warmup() {
                   onUrlInputChange={updateUrlInput}
                   onAddUrl={addFilesByUrl}
                   onUpdateFile={updateFile}
+                  driveImportState={driveImportState}
+                  onDriveImportState={setDriveImportState}
                 />
               </div>
             ))}
