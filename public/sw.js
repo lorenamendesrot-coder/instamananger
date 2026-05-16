@@ -346,13 +346,34 @@ async function maybeCloseParentItem(historyId, currentVfId, currentVfStatus) {
         published_at: s.result?.published_at,
         error:        s.error,
       }));
+
+      const updatedParent = {
+        ...parent,
+        status:      "posted",
+        results,
+        completedAt: new Date().toISOString(),
+        allSuccess:  allOk,
+      };
+
+      // Atualiza IDB local
       await updateItem(parent.id, {
         status:      "posted",
         results,
         completedAt: new Date().toISOString(),
         allSuccess:  allOk,
       });
-      console.log(`[SW] ✅ pai ${parent.id} → posted`);
+
+      // Atualiza Netlify Blob via API (a página lê daqui)
+      try {
+        await fetch(`${self.location.origin}/api/queue`, {
+          method:  "PUT",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify(updatedParent),
+        });
+        console.log(`[SW] ✅ pai ${parent.id} → posted (IDB + Blob)`);
+      } catch (e) {
+        console.warn("[SW] falha ao atualizar Blob:", e.message);
+      }
     }
 
     notifyClients({ type: "QUEUE_UPDATE" });
