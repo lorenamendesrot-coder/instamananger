@@ -725,7 +725,7 @@ export default function Warmup() {
 
           {/* Configurações gerais — ambos os modos */}
           <div className="card">
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 14 }}>DISTRIBUIÇÃO DE MÍDIAS</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 14 }}>📸 DISTRIBUIÇÃO DE MÍDIAS</div>
             <div style={{ display: "flex", gap: 6 }}>
               {[{ id: "roundrobin", label: "🔄 Round-robin" }, { id: "random", label: "🎲 Aleatório" }].map(({ id, label }) => (
                 <button key={id} onClick={() => setDistribution(id)} style={{
