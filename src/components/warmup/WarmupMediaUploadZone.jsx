@@ -132,27 +132,52 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
         </button>
       </div>
 
-      {/* Google Drive inline picker */}
+      {/* Google Drive — modal grande */}
       {showDrive && (
-        <div style={{
-          marginBottom: 8, borderRadius: 10,
-          border: "1px solid var(--border2)",
-          background: "var(--bg2)",
-          overflow: "hidden",
-          maxHeight: 480,
-          overflowY: "auto",
-        }}>
-          <DrivePicker
-            inline
-            accounts={[]}
-            onClose={() => setShowDrive(false)}
-            onSchedule={(items) => {
-              // Converte itens do Drive em entradas de URL para o UploadZone
-              const urls = items.map((item) => item.url || item.webContentLink).filter(Boolean);
-              if (urls.length) onAddUrl(typeConfig.id, urls);
-              setShowDrive(false);
-            }}
-          />
+        <div
+          style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000,padding:16 }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowDrive(false); }}
+        >
+          <div style={{ background:"var(--bg2)",borderRadius:16,border:"1px solid var(--border2)",width:"100%",maxWidth:700,maxHeight:"88vh",display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 32px 80px rgba(0,0,0,0.7)" }}>
+            {/* Cabeçalho do modal */}
+            <div style={{ padding:"14px 18px",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",gap:10,flexShrink:0 }}>
+              <svg width="16" height="16" viewBox="0 0 48 48">
+                <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.8 2.2 30.3 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.8 6C12.2 13 17.7 9.5 24 9.5z"/>
+                <path fill="#4285F4" d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4 6.9-10 6.9-17z"/>
+                <path fill="#FBBC05" d="M10.4 28.7A14.6 14.6 0 0 1 9.5 24c0-1.6.3-3.2.9-4.7L2.6 13.3A23.9 23.9 0 0 0 0 24c0 3.8.9 7.4 2.6 10.6l7.8-5.9z"/>
+                <path fill="#34A853" d="M24 48c6.3 0 11.6-2.1 15.5-5.6l-7.5-5.8c-2.1 1.4-4.8 2.3-8 2.3-6.3 0-11.7-4.2-13.6-10l-7.8 6C6.6 42.6 14.6 48 24 48z"/>
+              </svg>
+              <span style={{ fontWeight:700,fontSize:14 }}>Google Drive — Selecionar Mídias</span>
+              <div style={{ flex:1 }} />
+              <span style={{ fontSize:11,color:"var(--muted)" }}>Selecione arquivos ou use "📂 Usar pasta" para importar uma pasta inteira</span>
+              <button onClick={() => setShowDrive(false)} className="btn btn-ghost btn-sm" style={{ padding:"4px 10px",marginLeft:8 }}>✕</button>
+            </div>
+            {/* Conteúdo do picker */}
+            <div style={{ flex:1,overflowY:"auto",padding:"12px 16px" }}>
+              <DrivePicker
+                pickerMode
+                accounts={[]}
+                onClose={() => setShowDrive(false)}
+                onPick={(pickedVideos) => {
+                  // Converte vídeos do Drive em entradas com driveFileId para o UploadZone
+                  const entries = pickedVideos.map((v) => ({
+                    id: `drive-${v.id}-${Date.now()}-${Math.random()}`,
+                    name: v.name,
+                    status: "done",
+                    url: v.webContentLink || v.webViewLink || `drive://${v.id}`,
+                    driveFileId: v.id,
+                    driveName: v.name,
+                    size: v.size || 0,
+                    progress: 100,
+                    source: "google_drive",
+                  }));
+                  if (entries.length) onAddFiles(typeConfig.id, entries);
+                  setShowDrive(false);
+                }}
+                onSchedule={() => {}}
+              />
+            </div>
+          </div>
         </div>
       )}
 
