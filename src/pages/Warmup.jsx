@@ -64,7 +64,7 @@ export default function Warmup() {
   // ─── Config de agendamento Drive ─────────────────────────────────────────────
   const nowLocalStr = () => {
     const d = new Date();
-    d.setMinutes(d.getMinutes() + 15);
+    d.setMinutes(d.getMinutes() + 1);
     const pad = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
@@ -232,14 +232,15 @@ export default function Warmup() {
       const postType   = drivePostType;
       const mediaType  = MEDIA_TYPE_MAP[postType] || "VIDEO";
 
-      // Filtra só as mídias compatíveis com o postType escolhido
-      const pool = postType === "REEL"
-        ? mediaByType.reels
-        : postType === "FEED"
-          ? [...mediaByType.feed, ...mediaByType.reels]
-          : mediaByType.stories;
+      // No modo Drive, todos os arquivos done são usados independente do card onde foram adicionados
+      // O drivePostType define apenas como o post vai ser publicado
+      const pool = [
+        ...mediaByType.reels,
+        ...mediaByType.feed,
+        ...mediaByType.stories,
+      ];
 
-      if (!pool.length) { alert(`Nenhum arquivo compatível com o tipo "${postType}". Adicione mídias na aba Upload.`); return; }
+      if (!pool.length) { alert("Nenhum arquivo encontrado. Adicione mídias na aba Upload e aguarde o import terminar."); return; }
 
       const slots = [];
       let slotIdx = 0;
@@ -763,7 +764,7 @@ export default function Warmup() {
                 </div>
                 <input type="datetime-local" value={driveStartTime} onChange={e=>setDriveStartTime(e.target.value)}
                   style={{ background:"var(--bg3)", color:"var(--fg)", border:"1px solid var(--border)", borderRadius:7, padding:"6px 10px", fontSize:13, width:"100%" }} />
-                <div style={{ fontSize:10, color:"var(--muted)", marginTop:3 }}>🇧🇷 BRT (UTC-3) — padrão: agora + 15 min</div>
+                <div style={{ fontSize:10, color:"var(--muted)", marginTop:3 }}>🇧🇷 BRT (UTC-3) — padrão: agora + 1 min</div>
               </div>
               <div>
                 <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>Tipo de post</div>
