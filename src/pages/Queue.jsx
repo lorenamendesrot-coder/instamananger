@@ -506,13 +506,18 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   const paDone      = paItems?.filter(p => p.status === "done" || p.status === "error").length || 0;
   const paRunning   = paItems?.filter(p => p.status === "running").length || 0;
   const hasActivePa = paItems?.some(p => p.status === "pending" || p.status === "running");
+  const allPaDone   = paTotal > 0 && paDone >= paTotal;
 
-  const isPublishing    = (item.status === "done" || item.status === "running") && (hasActiveVf || hasActivePa);
+  const isPublishing    = (item.status === "done" || item.status === "running") && (hasActiveVf || hasActivePa) && !allPaDone;
   const effectiveStatus = isPublishing ? "running" : item.status;
-  const ss              = statusStyle(effectiveStatus);
+  // isPast: horário passou, ainda pending, nunca rodou — badge laranja
+  const isOverdue = item.status === "pending" && item.scheduledAt < Date.now() && !item.runCount;
+  const ss = isOverdue
+    ? { color: "var(--warning)", bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.30)", icon: "⚠" }
+    : statusStyle(effectiveStatus);
 
   const scheduledDate = new Date(item.scheduledAt);
-  const isPast        = item.scheduledAt < Date.now() && item.status === "pending";
+  const isPast        = isOverdue; // alias mantido para compatibilidade
   const mediaCount    = item.mediaUrls?.length || 1;
   const qty           = item.quantityPerCycle || 1;
   const thumbUrl      = item.mediaType === "IMAGE" ? item.mediaUrl : null;
@@ -585,7 +590,7 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
                 ? <>{ss.icon} Publicando {paDone}/{paTotal}{paRunning > 0 ? ` · ${paRunning} agora` : ""}</>
                 : isPublishing
                   ? <>{ss.icon} Publicando vídeos {vfDone}/{vfTotal}</>
-                  : <>{ss.icon} {effectiveStatus === "done" ? "Publicado" : effectiveStatus === "error" ? "Erro" : effectiveStatus === "running" ? "Rodando" : (item.runCount > 0 ? "Próximo ciclo" : isPast ? "Atrasado" : "Agendado")}</>}
+                  : <>{ss.icon} {effectiveStatus === "done" ? "Publicado" : effectiveStatus === "error" ? "Erro" : effectiveStatus === "running" ? "Rodando" : (item.runCount > 0 ? "Próximo ciclo" : isPast ? "⚠ Atrasado" : "Agendado")}</>}
             </span>
 
             {/* Tipo de post */}
