@@ -43,7 +43,7 @@ function matchesSearch(item, q) {
 const STATUS_INFO = {
   pending: { label: "Agendado", color: "var(--info)",    bg: "rgba(56,189,248,0.08)"  },
   running: { label: "Rodando",  color: "var(--warning)", bg: "rgba(245,158,11,0.08)"  },
-  done:    { label: "Feito",    color: "var(--success)", bg: "rgba(34,197,94,0.06)"   },
+  done:    { label: "Publicado", color: "var(--success)", bg: "rgba(34,197,94,0.06)"   },
   error:   { label: "Erro",     color: "var(--danger)",  bg: "rgba(239,68,68,0.06)"   },
 };
 
@@ -179,7 +179,7 @@ export default function Queue() {
           {[
             {icon:"📋",value:mainQueue.length,label:"total",    color:"var(--text)"   },
             {icon:"⏳",value:pendingCount,    label:"pendentes",color:"var(--info)"   },
-            {icon:"✅",value:doneCount,       label:"feitos",   color:"var(--success)"},
+            {icon:"✅",value:doneCount,       label:"publicados",   color:"var(--success)"},
             {icon:"❌",value:errorCount,      label:"erros",    color:"var(--danger)" },
           ].map(({icon,value,label,color}) => (
             <div key={label} className="card card-sm" style={{textAlign:"center",minWidth:72}}>
@@ -267,7 +267,7 @@ export default function Queue() {
                   {id:"all",label:"Todos",count:mainQueue.length},
                   {id:"pending",label:"Pendentes",count:pendingCount},
                   {id:"running",label:"Rodando",count:runningCount},
-                  {id:"done",label:"Feitos",count:doneCount},
+                  {id:"done",label:"Publicados",count:doneCount},
                   {id:"error",label:"Erros",count:errorCount},
                 ].filter(({id,count})=>count>0||id==="all").map(({id,label,count}) => (
                   <button key={id} onClick={()=>setFilterStatus(id)} className={`btn btn-sm ${filterStatus===id?"btn-primary":"btn-ghost"}`} style={{fontSize:12}}>
@@ -434,7 +434,7 @@ export default function Queue() {
 
 // ─── Helpers de cor por status ────────────────────────────────────────────────
 function statusStyle(status) {
-  if (status === "done")    return { color: "var(--success)", bg: "rgba(34,197,94,0.10)",  border: "rgba(34,197,94,0.25)",  icon: "✅" };
+  if (status === "done")    return { color: "var(--success)", bg: "rgba(34,197,94,0.10)",  border: "rgba(34,197,94,0.25)",  icon: "✅", label: "Publicado" };
   if (status === "error")   return { color: "var(--danger)",  bg: "rgba(239,68,68,0.10)",  border: "rgba(239,68,68,0.25)",  icon: "❌" };
   if (status === "running") return { color: "var(--warning)", bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.25)", icon: "⟳"  };
   return                           { color: "var(--info)",    bg: "rgba(56,189,248,0.10)", border: "rgba(56,189,248,0.25)", icon: "⏳" };
