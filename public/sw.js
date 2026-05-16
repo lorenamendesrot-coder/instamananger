@@ -316,7 +316,7 @@ async function maybeCloseParentItem(historyId, currentVfId, currentVfStatus) {
     const siblings = queue.filter((x) => x.type === "video_finish" && x.historyId === historyId);
     if (siblings.length === 0) return;
 
-    // Substitui o status do vf atual pelo status recém gravado (evita race com IDB)
+    // Substitui o status do vf atual (evita race com IDB)
     const siblingsUpdated = siblings.map((x) =>
       x.id === currentVfId ? { ...x, status: currentVfStatus } : x
     );
@@ -328,25 +328,45 @@ async function maybeCloseParentItem(historyId, currentVfId, currentVfStatus) {
       return;
     }
 
-    const parentQueueId = siblings[0]?.parentQueueId;
-    const parent = parentQueueId ? queue.find((x) => x.id === parentQueueId) : null;
-
     const ok    = siblingsUpdated.filter((s) => s.status === "done").length;
     const total = siblingsUpdated.length;
     const allOk = ok === total;
 
-    console.log(`[SW] grupo ${historyId} concluído — ${ok}/${total} publicados${parent ? "" : " (pai não encontrado: " + parentQueueId + ")"}`);
+    const results = siblingsUpdated.map((s) => ({
+      account_id:   s.account_id,
+      username:     s.username,
+      success:      s.status === "done",
+      media_id:     s.result?.media_id,
+      published_at: s.result?.published_at,
+      error:        s.error,
+    }));
+
+    // Busca o pai pelo parentQueueId no IDB, ou pelo Blob se não achar
+    const parentQueueId = siblings.find((s) => s.parentQueueId)?.parentQueueId;
+    let parent = parentQueueId ? queue.find((x) => x.id === parentQueueId) : null;
+
+    // Fallback: busca no Blob via API
+    if (!parent && parentQueueId) {
+      try {
+        const allBlob = await fetch(`${self.location.origin}/api/queue`).then(r => r.json());
+        parent = Array.isArray(allBlob) ? allBlob.find((x) => x.id === parentQueueId) : null;
+      } catch (_) {}
+    }
+
+    // Último fallback: busca por conta em comum no IDB ou Blob
+    if (!parent) {
+      const allItems = await fetch(`${self.location.origin}/api/queue`).then(r => r.json()).catch(() => queue);
+      const allItemsArr = Array.isArray(allItems) ? allItems : queue;
+      const siblingAccountIds = new Set(siblingsUpdated.map(s => s.account_id));
+      parent = allItemsArr.find((x) =>
+        !x.type &&
+        x.accounts?.some?.((a) => siblingAccountIds.has(a.id))
+      );
+    }
+
+    console.log(`[SW] grupo ${historyId} concluído — ${ok}/${total} publicados | pai: ${parent?.id || "NÃO ENCONTRADO"}`);
 
     if (parent) {
-      const results = siblingsUpdated.map((s) => ({
-        account_id:   s.account_id,
-        username:     s.username,
-        success:      s.status === "done",
-        media_id:     s.result?.media_id,
-        published_at: s.result?.published_at,
-        error:        s.error,
-      }));
-
       const updatedParent = {
         ...parent,
         status:      "posted",
@@ -355,25 +375,17 @@ async function maybeCloseParentItem(historyId, currentVfId, currentVfStatus) {
         allSuccess:  allOk,
       };
 
-      // Atualiza IDB local
-      await updateItem(parent.id, {
-        status:      "posted",
-        results,
-        completedAt: new Date().toISOString(),
-        allSuccess:  allOk,
+      // Atualiza IDB
+      await updateItem(parent.id, { status: "posted", results, completedAt: new Date().toISOString(), allSuccess: allOk });
+
+      // Atualiza Blob
+      await fetch(`${self.location.origin}/api/queue`, {
+        method:  "PUT",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify(updatedParent),
       });
 
-      // Atualiza Netlify Blob via API (a página lê daqui)
-      try {
-        await fetch(`${self.location.origin}/api/queue`, {
-          method:  "PUT",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify(updatedParent),
-        });
-        console.log(`[SW] ✅ pai ${parent.id} → posted (IDB + Blob)`);
-      } catch (e) {
-        console.warn("[SW] falha ao atualizar Blob:", e.message);
-      }
+      console.log(`[SW] ✅ pai ${parent.id} → posted (${ok}/${total})`);
     }
 
     notifyClients({ type: "QUEUE_UPDATE" });
