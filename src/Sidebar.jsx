@@ -7,7 +7,7 @@ const NAV = [
   { to: "/contas",       label: "Contas",       icon: "👤", desc: "Gerencie suas contas"  },
   { to: "/aquecimento",    label: "Aquecimento",  icon: "🔥", desc: "Aquecer contas"        },
   { to: "/fila",           label: "Fila",         icon: "🗂️", desc: "Agendamentos ativos"   },
-  { to: "/historico",      label: "Histórico",    icon: "📊", desc: "Posts publicados"      },
+  { to: "/historico",      label: "Histórico",    icon: "🕐", desc: "Posts publicados"      },
   { to: "/configuracoes",  label: "Configurações",icon: "⚙️", desc: "Ajustes e preferências"},
 ];
 
