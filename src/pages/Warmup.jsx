@@ -243,36 +243,38 @@ export default function Warmup() {
 
       if (!pool.length) { alert("Nenhum arquivo encontrado. Adicione mídias na aba Upload e aguarde o import terminar."); return; }
 
+      // 1 item por mídia com TODAS as contas — o scheduler explode em per_account
+      const allAccounts = selectedAccounts.map(acc => ({
+        id: acc.id, username: acc.username,
+        access_token: acc.access_token, page_id: acc.page_id || null,
+      }));
+
       const slots = [];
-      let slotIdx = 0;
-      for (const acc of selectedAccounts) {
-        for (let i = 0; i < pool.length; i++) {
-          const media = pool[i];
-          const jitter = jitterMs > 0 ? (Math.random() * 2 - 1) * jitterMs : 0;
-          const scheduledAt = startMs + slotIdx * gapMs + Math.round(jitter);
-          const caption = parsedCaptions.length ? parsedCaptions[slotIdx % parsedCaptions.length] : driveCaption;
-          slots.push({
-            id:            `drv-${acc.id}-${i}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            accountId:     acc.id,
-            username:      acc.username,
-            mediaUrl:      media.url,
-            mediaUrls:     [media.url],
-            mediaName:     media.name,
-            mediaType,
-            postType,
-            mediaCategory: postType === "REEL" ? "reels" : postType === "FEED" ? "feed" : "stories",
-            caption,
-            bulkCaptions:  parsedCaptions,
-            captionMode,
-            accounts:      [{ id: acc.id, username: acc.username, access_token: acc.access_token, page_id: acc.page_id || null }],
-            scheduledAt,
-            status:        "pending",
-            warmup:        true,
-            warmupDay:     1,
-            created_at:    new Date().toISOString(),
-          });
-          slotIdx++;
-        }
+      for (let i = 0; i < pool.length; i++) {
+        const media = pool[i];
+        const jitter = jitterMs > 0 ? (Math.random() * 2 - 1) * jitterMs : 0;
+        const scheduledAt = startMs + i * gapMs + Math.round(jitter);
+        const caption = parsedCaptions.length ? parsedCaptions[i % parsedCaptions.length] : driveCaption;
+        const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        slots.push({
+          id:            `drv-${i}-${uid}`,
+          historyId:     `h-drv-${i}-${uid}`,
+          mediaUrl:      media.url,
+          mediaUrls:     [media.url],
+          mediaName:     media.name,
+          mediaType,
+          postType,
+          mediaCategory: postType === "REEL" ? "reels" : postType === "FEED" ? "feed" : "stories",
+          caption,
+          bulkCaptions:  parsedCaptions,
+          captionMode,
+          accounts:      allAccounts,
+          scheduledAt,
+          status:        "pending",
+          warmup:        true,
+          warmupDay:     1,
+          created_at:    new Date().toISOString(),
+        });
       }
       generated = slots;
     }
