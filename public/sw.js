@@ -220,7 +220,7 @@ async function runVideoFinish(item) {
       console.log(`[SW] video_finish ✅ @${item.username} media_id:${result.media_id}`);
 
       // Verifica se todos os video_finish do mesmo grupo terminaram
-      await maybeCloseParentItem(item.historyId);
+      await maybeCloseParentItem(item.historyId, item.id, "done");
 
       notifyClients({ type: "QUEUE_UPDATE" });
 
@@ -270,7 +270,7 @@ async function runVideoFinish(item) {
       }
 
       await updateItem(item.id, { status: "error", error: errMsg });
-      await maybeCloseParentItem(item.historyId);
+      await maybeCloseParentItem(item.historyId, item.id, "error");
       notifyClients({ type: "QUEUE_UPDATE" });
 
     } else {
@@ -289,7 +289,7 @@ async function runVideoFinish(item) {
           await saveItem("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
         }
         await updateItem(item.id, { status: "error", error: errMsg });
-        await maybeCloseParentItem(item.historyId);
+        await maybeCloseParentItem(item.historyId, item.id, "error");
         notifyClients({ type: "QUEUE_UPDATE" });
       } else {
         // Ainda há tentativas — reagenda para 30s depois
@@ -309,30 +309,36 @@ async function runVideoFinish(item) {
 }
 
 // ─── Fecha item pai quando todos os video_finish do grupo terminaram ──────────
-async function maybeCloseParentItem(historyId) {
+async function maybeCloseParentItem(historyId, currentVfId, currentVfStatus) {
   if (!historyId) return;
   try {
     const queue    = await readQueue();
     const siblings = queue.filter((x) => x.type === "video_finish" && x.historyId === historyId);
     if (siblings.length === 0) return;
 
-    const allDone = siblings.every((x) => x.status === "done" || x.status === "error");
-    if (!allDone) return;
+    // Substitui o status do vf atual pelo status recém gravado (evita race com IDB)
+    const siblingsUpdated = siblings.map((x) =>
+      x.id === currentVfId ? { ...x, status: currentVfStatus } : x
+    );
 
-    // Usa o parentQueueId salvo no video_finish para encontrar o pai diretamente
+    const allDone = siblingsUpdated.every((x) => x.status === "done" || x.status === "error");
+    if (!allDone) {
+      const pending = siblingsUpdated.filter((x) => x.status !== "done" && x.status !== "error").length;
+      console.log(`[SW] grupo ${historyId} — ainda ${pending} pendente(s)`);
+      return;
+    }
+
     const parentQueueId = siblings[0]?.parentQueueId;
-    const parent = parentQueueId
-      ? queue.find((x) => x.id === parentQueueId)
-      : null;
+    const parent = parentQueueId ? queue.find((x) => x.id === parentQueueId) : null;
 
-    const ok    = siblings.filter((s) => s.status === "done").length;
-    const total = siblings.length;
+    const ok    = siblingsUpdated.filter((s) => s.status === "done").length;
+    const total = siblingsUpdated.length;
     const allOk = ok === total;
 
-    console.log(`[SW] grupo ${historyId} concluído — ${ok}/${total} publicados`);
+    console.log(`[SW] grupo ${historyId} concluído — ${ok}/${total} publicados${parent ? "" : " (pai não encontrado: " + parentQueueId + ")"}`);
 
     if (parent) {
-      const results = siblings.map((s) => ({
+      const results = siblingsUpdated.map((s) => ({
         account_id:   s.account_id,
         username:     s.username,
         success:      s.status === "done",
@@ -346,6 +352,7 @@ async function maybeCloseParentItem(historyId) {
         completedAt: new Date().toISOString(),
         allSuccess:  allOk,
       });
+      console.log(`[SW] ✅ pai ${parent.id} → posted`);
     }
 
     notifyClients({ type: "QUEUE_UPDATE" });
