@@ -3,6 +3,9 @@
 // GET  /api/drive-browse?folder=root       → lista pasta raiz
 // GET  /api/drive-browse?folder=FOLDER_ID  → lista subpasta
 
+import { webcrypto } from "node:crypto";
+const crypto = globalThis.crypto ?? webcrypto;
+
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
 function corsHeaders(origin) {
