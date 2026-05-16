@@ -1,10 +1,11 @@
 import { NavLink } from "react-router-dom";
 
 const NAV = [
-  { to: "/",            label: "Contas",      icon: "👤" },
-  { to: "/aquecimento", label: "Aquecimento", icon: "🔥" },
-  { to: "/fila",        label: "Fila",        icon: "🗂️" },
-  { to: "/historico",   label: "Histórico",   icon: "📋" },
+  { to: "/",              label: "Contas",      icon: "👤" },
+  { to: "/aquecimento",   label: "Aquecimento", icon: "🔥" },
+  { to: "/fila",          label: "Fila",        icon: "🗂️" },
+  { to: "/historico",     label: "Histórico",   icon: "📋" },
+  { to: "/configuracoes", label: "Config",      icon: "⚙️" },
 ];
 
 export default function MobileBottomNav() {

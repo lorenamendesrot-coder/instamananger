@@ -3,10 +3,11 @@ import { NavLink } from "react-router-dom";
 import { useScheduler } from "./App.jsx";
 
 const NAV = [
-  { to: "/",            label: "Contas",      icon: "👤", desc: "Gerencie suas contas"  },
-  { to: "/aquecimento", label: "Aquecimento", icon: "🔥", desc: "Aquecer contas"        },
-  { to: "/fila",        label: "Fila",        icon: "🗂️", desc: "Agendamentos ativos"   },
-  { to: "/historico",   label: "Histórico",   icon: "📊", desc: "Posts publicados"      },
+  { to: "/",               label: "Contas",       icon: "👤", desc: "Gerencie suas contas"  },
+  { to: "/aquecimento",    label: "Aquecimento",  icon: "🔥", desc: "Aquecer contas"        },
+  { to: "/fila",           label: "Fila",         icon: "🗂️", desc: "Agendamentos ativos"   },
+  { to: "/historico",      label: "Histórico",    icon: "📊", desc: "Posts publicados"      },
+  { to: "/configuracoes",  label: "Configurações",icon: "⚙️", desc: "Ajustes e preferências"},
 ];
 
 export default function Sidebar({ accounts, oauthUrl, syncing, onConnectInstagram, oauthStatus }) {

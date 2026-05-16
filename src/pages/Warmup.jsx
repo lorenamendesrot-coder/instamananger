@@ -383,9 +383,10 @@ export default function Warmup() {
                   onAddFiles={addFiles}
                   onRemoveFile={removeFile}
                   onRemoveAll={removeAllFiles}
-                                                      urlInput={urlInputs[typeConfig.id]}
+                  urlInput={urlInputs[typeConfig.id]}
                   onUrlInputChange={updateUrlInput}
                   onAddUrl={addFilesByUrl}
+                  onUpdateFile={updateFile}
                 />
               </div>
             ))}

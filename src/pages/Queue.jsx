@@ -2,12 +2,10 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useScheduler, useAccounts } from "../App.jsx";
 import Modal from "../Modal.jsx";
-import DrivePicker from "../components/DrivePicker.jsx";
 
 const QUEUE_TABS = [
-  { id: "fila",    icon: "📋", label: "Fila"         },
-  { id: "drive",   icon: "📂", label: "Google Drive" },
-  { id: "monitor", icon: "📊", label: "Monitor"      },
+  { id: "fila",    icon: "📋", label: "Fila"    },
+  { id: "monitor", icon: "📊", label: "Monitor" },
 ];
 
 const SORT_OPTIONS = [
@@ -301,8 +299,8 @@ export default function Queue() {
             <div className="card" style={{textAlign:"center",padding:"56px 20px",color:"var(--muted)"}}>
               <div style={{fontSize:48,marginBottom:14}}>◷</div>
               <div style={{fontWeight:700,color:"var(--text)",fontSize:15,marginBottom:8}}>{queue.length===0?"Fila vazia":"Nenhum item neste filtro"}</div>
-              <div style={{fontSize:12,marginBottom:18}}>{queue.length===0?"Use a aba Google Drive para agendar vídeos.":"Tente outro filtro acima."}</div>
-              {queue.length===0 && <button className="btn btn-ghost btn-sm" onClick={()=>setTab("drive")}>📂 Google Drive</button>}
+              <div style={{fontSize:12,marginBottom:18}}>{queue.length===0?"Agende posts em Aquecimento ou adicione manualmente.":"Tente outro filtro acima."}</div>
+              {queue.length===0 && <button className="btn btn-ghost btn-sm" onClick={()=>{ window.location.href="/aquecimento"; }}>🔥 Ir para Aquecimento</button>}
             </div>
           ) : (
             <QueueList items={filtered} filterDay={filterDay} vfByParent={vfByParent} paByHistory={paByHistory} activeVfParentIds={activeVfParentIds}
@@ -312,16 +310,6 @@ export default function Queue() {
         </div>
       )}
 
-      {/* ══ TAB: GOOGLE DRIVE ════════════════════════════════════════════════ */}
-      {tab==="drive" && (
-        <DrivePicker
-          accounts={accounts}
-          onSchedule={async (items) => { await addBatch(items); window.dispatchEvent(new CustomEvent("sw:queue-update")); setTab("fila"); }}
-          onClose={null}
-          inline={true}
-        />
-      )}
-
       {/* ══ TAB: MONITOR ═════════════════════════════════════════════════════ */}
       {tab==="monitor" && (
         <div>
@@ -329,7 +317,7 @@ export default function Queue() {
             <div className="card" style={{textAlign:"center",padding:"56px 20px",color:"var(--muted)"}}>
               <div style={{fontSize:48,marginBottom:14}}>📊</div>
               <div style={{fontWeight:700,color:"var(--text)",fontSize:15,marginBottom:8}}>Nada para monitorar</div>
-              <div style={{fontSize:12}}>Agende posts na aba Google Drive ou em Aquecimento.</div>
+              <div style={{fontSize:12}}>Agende posts em Aquecimento para começar.</div>
             </div>
           ) : (
             <>

@@ -5,6 +5,7 @@ import Accounts from "./pages/Accounts.jsx";
 import Queue    from "./pages/Queue.jsx";
 import History  from "./pages/History.jsx";
 import Warmup   from "./pages/Warmup.jsx";
+import Settings from "./pages/Settings.jsx";
 
 import { useAccounts }   from "./useAccounts.js";
 import { useToast }      from "./useToast.js";
@@ -441,10 +442,11 @@ function AppShell() {
         <main style={{ flex: 1, overflow: "auto", minWidth: 0, background: "var(--bg)" }}>
           <Toast toast={toast} />
           <Routes>
-            <Route path="/"            element={<Accounts />} />
-            <Route path="/fila"        element={<Queue />} />
-            <Route path="/historico"   element={<History />} />
-            <Route path="/aquecimento" element={<Warmup />} />
+            <Route path="/"               element={<Accounts />} />
+            <Route path="/fila"           element={<Queue />} />
+            <Route path="/historico"      element={<History />} />
+            <Route path="/aquecimento"    element={<Warmup />} />
+            <Route path="/configuracoes"  element={<Settings />} />
           </Routes>
         </main>
 
