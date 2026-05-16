@@ -212,7 +212,7 @@ async function pushResultToParent(store, historyId, result) {
         ...parent,
         results: newResults,
         ...(allDone && !parent.loop ? {
-          status:      "done",
+          status:      "posted",
           completedAt: new Date().toISOString(),
           finishedAt:  new Date().toISOString(),
         } : {}),

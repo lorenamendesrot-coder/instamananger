@@ -116,9 +116,9 @@ function SchedulerProvider({ addEntry, children }) {
 
     // Sincroniza histórico de itens done pelo scheduler serverless
     try {
-      const doneSemHistoria = all.filter((x) => !x.type && x.status === "done" && !x._historySynced);
+      const doneSemHistoria = all.filter((x) => (x.status === "done" || x.status === "posted") && !x._historySynced && (x.type === "group" || !x.type));
       for (const item of doneSemHistoria) {
-        const historyId = `h-srv-${item.id}`;
+        const historyId = item.historyId || `h-srv-${item.id}`;
         const jaExiste  = await dbGet("history", historyId).catch(() => null);
 
         // Busca video_finish pendentes vinculados a este item para mostrar contas aguardando
