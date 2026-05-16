@@ -17,26 +17,20 @@ function fmtDuration(sec) {
   return `${m}:${String(s).padStart(2,"0")}`;
 }
 
-// Retorna "YYYY-MM-DDTHH:MM" no horário de Brasília (UTC-3), arredondado para próximos 15 min
-function nowBrasilia(offsetMinutes = 15) {
-  // UTC-3 = offset de -180 min em relação a UTC
-  const BRASILIA_OFFSET_MS = -3 * 60 * 60 * 1000;
-  const utcNow = Date.now();
-  const brasiliaMs = utcNow + BRASILIA_OFFSET_MS;
-  // Adiciona o offset desejado e arredonda para o próximo bloco de 15 min
-  const withOffset = brasiliaMs + offsetMinutes * 60 * 1000;
+// Retorna "YYYY-MM-DDTHH:MM" no horario LOCAL do navegador, arredondado para proximos 15 min
+function nowLocal(offsetMinutes = 15) {
+  const withOffset = Date.now() + offsetMinutes * 60 * 1000;
   const rounded = Math.ceil(withOffset / (15 * 60 * 1000)) * (15 * 60 * 1000);
   const d = new Date(rounded);
   const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// Converte o valor do input datetime-local (lido como Brasília) para timestamp UTC real
-function brasiliaInputToUTC(localStr) {
-  // O input está em horário de Brasília (UTC-3) — precisa adicionar 3h para obter UTC
+// Converte o valor do input datetime-local para timestamp UTC real.
+// new Date("YYYY-MM-DDTHH:MM") interpreta como horario LOCAL do browser — .getTime() retorna UTC correto.
+function localInputToUTC(localStr) {
   if (!localStr) return Date.now();
-  const BRASILIA_OFFSET_MS = 3 * 60 * 60 * 1000; // +3h para converter BRT → UTC
-  return new Date(localStr).getTime() + BRASILIA_OFFSET_MS;
+  return new Date(localStr).getTime();
 }
 
 const IconFolder = () => <span style={{fontSize:20}}>📁</span>;
@@ -114,7 +108,7 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
   // Configurações de agendamento
   const [postType,    setPostType]    = useState("REEL");
   const [caption,     setCaption]     = useState("");
-  const [startTime,   setStartTime]   = useState(nowBrasilia(15));
+  const [startTime,   setStartTime]   = useState(nowLocal(15));
   const [gapMinutes,  setGapMinutes]  = useState(60);
   const [jitterMin,   setJitterMin]   = useState(10);
   const [loop,        setLoop]        = useState(false);
@@ -187,7 +181,7 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
 
       const chosenVideos = videos.filter(v=>selected.has(v.id));
       // startTime está em horário de Brasília — converter para UTC
-      const startMs      = brasiliaInputToUTC(startTime);
+      const startMs      = localInputToUTC(startTime);
       const gapMs        = gapMinutes * 60 * 1000;
       const jitterMs     = jitterMin * 60 * 1000;
 
@@ -447,7 +441,7 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
               <div style={{fontSize:12,color:"var(--muted)"}}>
                 <strong style={{color:"var(--fg)"}}>{selected.size}</strong> vídeo{selected.size!==1?"s":""} ·{" "}
                 <strong style={{color:"var(--fg)"}}>{selectedAccounts.length}</strong> conta{selectedAccounts.length!==1?"s":""} ·{" "}
-                início {new Date(brasiliaInputToUTC(startTime)).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",timeZone:"America/Sao_Paulo"})}
+                início {new Date(localInputToUTC(startTime)).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",timeZone:"America/Sao_Paulo"})}
                 {jitterMin>0&&<span style={{color:"var(--accent-light)"}}> · ±{jitterMin}min jitter</span>}
               </div>
 
