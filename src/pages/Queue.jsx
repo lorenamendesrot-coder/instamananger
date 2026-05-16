@@ -39,10 +39,11 @@ function matchesSearch(item, q) {
 }
 
 const STATUS_INFO = {
-  pending: { label: "Agendado", color: "var(--info)",    bg: "rgba(56,189,248,0.08)"  },
-  running: { label: "Rodando",  color: "var(--warning)", bg: "rgba(245,158,11,0.08)"  },
-  done:    { label: "Publicado", color: "var(--success)", bg: "rgba(34,197,94,0.06)"   },
-  error:   { label: "Erro",     color: "var(--danger)",  bg: "rgba(239,68,68,0.06)"   },
+  pending:  { label: "Agendado",            color: "var(--info)",    bg: "rgba(56,189,248,0.08)"  },
+  running:  { label: "Rodando",             color: "var(--warning)", bg: "rgba(245,158,11,0.08)"  },
+  done:     { label: "Publicado",           color: "var(--success)", bg: "rgba(34,197,94,0.06)"   },
+  posted:   { label: "Postado com Sucesso", color: "var(--success)", bg: "rgba(34,197,94,0.10)"   },
+  error:    { label: "Erro",                color: "var(--danger)",  bg: "rgba(239,68,68,0.06)"   },
 };
 
 function startOfDay(date) { const d=new Date(date); d.setHours(0,0,0,0); return d.getTime(); }
@@ -422,6 +423,7 @@ export default function Queue() {
 
 // ─── Helpers de cor por status ────────────────────────────────────────────────
 function statusStyle(status) {
+  if (status === "posted")  return { color: "var(--success)", bg: "rgba(34,197,94,0.15)",  border: "rgba(34,197,94,0.5)",  icon: "✅", label: "Postado com Sucesso" };
   if (status === "done")    return { color: "var(--success)", bg: "rgba(34,197,94,0.10)",  border: "rgba(34,197,94,0.25)",  icon: "✅", label: "Publicado" };
   if (status === "error")   return { color: "var(--danger)",  bg: "rgba(239,68,68,0.10)",  border: "rgba(239,68,68,0.25)",  icon: "❌" };
   if (status === "running") return { color: "var(--warning)", bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.25)", icon: "⟳"  };
@@ -538,20 +540,24 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   let statusLabel = "Agendado";
   if (isPublishing && isGroup) statusLabel = `Publicando ${paDone}/${paTotal}`;
   else if (isPublishing)       statusLabel = `Publicando ${vfDone}/${vfTotal}`;
+  else if (effectiveStatus === "posted")  statusLabel = "✅ Postado com Sucesso!";
   else if (effectiveStatus === "done")    statusLabel = "Publicado";
   else if (effectiveStatus === "error")   statusLabel = "Erro";
   else if (effectiveStatus === "running") statusLabel = "Rodando";
   else if (item.runCount > 0)  statusLabel = "Próximo ciclo";
   else if (isPast)             statusLabel = "Atrasado";
 
+  const isPosted = effectiveStatus === "posted";
+
   return (
     <div style={{
       borderRadius: 10,
-      border: `1px solid ${isSelected ? "var(--accent)" : ss.border}`,
-      borderLeft: `3px solid ${isSelected ? "var(--accent)" : ss.color}`,
-      background: isSelected ? "rgba(124,92,252,0.07)" : "var(--bg2)",
+      border:     `1px solid ${isSelected ? "var(--accent)" : isPosted ? "rgba(34,197,94,0.5)" : ss.border}`,
+      borderLeft: `${isPosted ? "4px" : "3px"} solid ${isSelected ? "var(--accent)" : ss.color}`,
+      background: isSelected ? "rgba(124,92,252,0.07)" : isPosted ? "rgba(34,197,94,0.07)" : "var(--bg2)",
       overflow: "hidden",
       transition: "all 0.15s",
+      boxShadow: isPosted ? "0 0 0 1px rgba(34,197,94,0.15)" : "none",
     }}>
 
       {/* ── Linha principal ── */}

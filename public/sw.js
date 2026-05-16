@@ -219,6 +219,9 @@ async function runVideoFinish(item) {
       await updateItem(item.id, { status: "done", result, finishedAt: new Date().toISOString() });
       console.log(`[SW] video_finish ✅ @${item.username} media_id:${result.media_id}`);
 
+      // Verifica se todos os video_finish do mesmo grupo terminaram
+      await maybeCloseParentItem(item.historyId);
+
       notifyClients({ type: "QUEUE_UPDATE" });
 
       try {
@@ -267,6 +270,7 @@ async function runVideoFinish(item) {
       }
 
       await updateItem(item.id, { status: "error", error: errMsg });
+      await maybeCloseParentItem(item.historyId);
       notifyClients({ type: "QUEUE_UPDATE" });
 
     } else {
@@ -285,6 +289,7 @@ async function runVideoFinish(item) {
           await saveItem("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
         }
         await updateItem(item.id, { status: "error", error: errMsg });
+        await maybeCloseParentItem(item.historyId);
         notifyClients({ type: "QUEUE_UPDATE" });
       } else {
         // Ainda há tentativas — reagenda para 30s depois
@@ -300,6 +305,66 @@ async function runVideoFinish(item) {
     } else {
       await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 20000 });
     }
+  }
+}
+
+// ─── Fecha item pai quando todos os video_finish do grupo terminaram ──────────
+async function maybeCloseParentItem(historyId) {
+  if (!historyId) return;
+  try {
+    const queue   = await readQueue();
+    // Todos os video_finish deste historyId
+    const siblings = queue.filter((x) => x.type === "video_finish" && x.historyId === historyId);
+    if (siblings.length === 0) return;
+
+    const allDone = siblings.every((x) => x.status === "done" || x.status === "error");
+    if (!allDone) return;
+
+    // Encontra o item pai (o item original que gerou esses video_finish)
+    // O pai tem id que é prefixo do historyId: historyId = "h-{timestamp}-{mi}"
+    // O pai tem status "done" com results vazio (colocado assim quando o runItem terminou)
+    const parent = queue.find((x) => !x.type && x.status === "done" &&
+      siblings.some((s) => s.accounts?.some?.((a) => x.accounts?.some?.((pa) => pa.id === a.id)))
+    );
+
+    const ok    = siblings.filter((s) => s.status === "done").length;
+    const total = siblings.length;
+    const allOk = ok === total;
+
+    console.log(`[SW] grupo ${historyId} concluído — ${ok}/${total} publicados`);
+
+    // Atualiza o pai com resultado final consolidado
+    if (parent) {
+      const results = siblings.map((s) => ({
+        account_id:   s.account_id,
+        username:     s.username,
+        success:      s.status === "done",
+        media_id:     s.result?.media_id,
+        published_at: s.result?.published_at,
+        error:        s.error,
+      }));
+      await updateItem(parent.id, {
+        status:      "posted",
+        results,
+        completedAt: new Date().toISOString(),
+        allSuccess:  allOk,
+      });
+    }
+
+    // Notificação final do grupo
+    try {
+      if (Notification.permission === "granted") {
+        self.registration.showNotification("Insta Manager", {
+          body: allOk
+            ? `✅ Postado com sucesso em ${total} conta(s)!`
+            : `⚠️ Publicado em ${ok}/${total} conta(s)`,
+          icon: "/favicon.ico",
+          tag:  `group-${historyId}`,
+        });
+      }
+    } catch (_) {}
+  } catch (err) {
+    console.warn("[SW] maybeCloseParentItem erro:", err.message);
   }
 }
 
