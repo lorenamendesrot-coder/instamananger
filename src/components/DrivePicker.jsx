@@ -161,33 +161,82 @@ export default function DrivePicker({ accounts, onSchedule, onClose }) {
   async function handleSchedule() {
     if (!selected.size || !accounts?.length) return;
     setScheduling(true);
-    const chosenVideos = videos.filter((v) => selected.has(v.id));
-    const startMs      = new Date(startTime).getTime();
-    const gapMs        = gapMinutes * 60 * 1000;
-    const jitterMs     = jitterMin * 60 * 1000; // máximo de variação em ms
+    setError(null);
 
-    const items = chosenVideos.map((video, i) => {
-      // Jitter aleatório entre -jitterMs e +jitterMs (exceto no primeiro post)
-      const jitter = i === 0 ? 0 : Math.floor(Math.random() * (jitterMs * 2 + 1)) - jitterMs;
-      return {
-        id:          `drive-${video.id}-${Date.now()}-${i}`,
-        status:      "pending",
-        postType,
-        mediaType:   "VIDEO",
-        mediaUrl:    video.url,
-        caption,
-        accounts,
-        scheduledAt: startMs + i * gapMs + jitter,
-        createdAt:   new Date().toISOString(),
-        loop,
-        source:      "google_drive",
-        driveFileId: video.id,
-        driveName:   video.name,
-      };
-    });
-    await onSchedule(items);
-    setScheduling(false);
-    onClose();
+    try {
+      // Obtém token válido do Drive para o proxy
+      const driveToken = await drive.getValidToken();
+
+      const chosenVideos = videos.filter((v) => selected.has(v.id));
+      const startMs      = new Date(startTime).getTime();
+      const gapMs        = gapMinutes * 60 * 1000;
+      const jitterMs     = jitterMin * 60 * 1000;
+
+      // ── Faz upload de cada vídeo para o proxy antes de agendar ─────────────
+      // O proxy baixa do Drive com autenticação e serve uma URL pública
+      // que a API da Meta consegue acessar sem redirecionamentos.
+      const resolvedVideos = [];
+      for (let i = 0; i < chosenVideos.length; i++) {
+        const video = chosenVideos[i];
+        setError(`Preparando vídeo ${i + 1}/${chosenVideos.length}: ${video.name}…`);
+
+        const res = await fetch("/api/drive-proxy", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({
+            file_id:      video.id,
+            file_name:    video.name,
+            access_token: driveToken,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data.url) {
+          // Token expirado → tenta renovar e refaz uma vez
+          if (data.token_expired) {
+            setError("Sessão do Drive expirada. Reconectando…");
+            throw new Error("token_expired");
+          }
+          throw new Error(`Erro ao preparar "${video.name}": ${data.error || "falha desconhecida"}`);
+        }
+
+        resolvedVideos.push({ ...video, proxyUrl: data.url });
+      }
+
+      setError(null);
+
+      // ── Agenda com a URL do proxy (não mais a URL do Drive) ─────────────────
+      const items = resolvedVideos.map((video, i) => {
+        const jitter = i === 0 ? 0 : Math.floor(Math.random() * (jitterMs * 2 + 1)) - jitterMs;
+        return {
+          id:          `drive-${video.id}-${Date.now()}-${i}`,
+          status:      "pending",
+          postType,
+          mediaType:   "VIDEO",
+          mediaUrl:    video.proxyUrl,   // ← URL do proxy, não do Drive
+          caption,
+          accounts,
+          scheduledAt: startMs + i * gapMs + jitter,
+          createdAt:   new Date().toISOString(),
+          loop,
+          source:      "google_drive",
+          driveFileId: video.id,
+          driveName:   video.name,
+        };
+      });
+
+      await onSchedule(items);
+      onClose();
+    } catch (err) {
+      if (err.message !== "token_expired") {
+        setError(err.message);
+      }
+      // token_expired: o useDriveAuth já trocou o status para "expired"
+      // o usuário vai ver a tela de reconexão
+    } finally {
+      setScheduling(false);
+    }
   }
 
   // ─── Estilos compartilhados ───────────────────────────────────────────────

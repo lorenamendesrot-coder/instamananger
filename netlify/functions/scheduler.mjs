@@ -147,7 +147,7 @@ async function processVideoFinish(store, vf) {
     }
 
     const attempts = (vf.attempts || 0) + 1;
-    if (attempts >= (vf.maxAttempts || 20)) {
+    if (attempts >= (vf.maxAttempts || 40)) {
       await queueUpdate(store, { ...vf, status: "error", error: "Timeout: vídeo não processou após múltiplas tentativas" });
       await pushResultToParent(store, vf.historyId, {
         account_id: vf.account_id,
@@ -157,11 +157,11 @@ async function processVideoFinish(store, vf) {
       });
     } else {
       console.log(`[scheduler] video_finish @${vf.username} IN_PROGRESS (tentativa ${attempts})`);
-      await queueUpdate(store, { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
+      await queueUpdate(store, { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 30000 });
     }
   } catch (err) {
     const attempts = (vf.attempts || 0) + 1;
-    if (attempts >= (vf.maxAttempts || 20)) {
+    if (attempts >= (vf.maxAttempts || 40)) {
       await queueUpdate(store, { ...vf, status: "error", error: err.message });
       await pushResultToParent(store, vf.historyId, {
         account_id: vf.account_id,
@@ -170,7 +170,7 @@ async function processVideoFinish(store, vf) {
         error:      err.message,
       });
     } else {
-      await queueUpdate(store, { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
+      await queueUpdate(store, { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 30000 });
     }
   }
 }
@@ -276,7 +276,7 @@ async function processPerAccount(store, item) {
         caption:     item.caption || "",
         createdAt:   new Date().toISOString(),
         attempts:    0,
-        maxAttempts: 20,
+        maxAttempts: 40, // ~20 minutos de margem para o Instagram processar
       });
       // Marca o sub-item como aguardando video_finish (não done ainda)
       await queueUpdate(store, { ...item, status: "done", awaitingVideoFinish: true });

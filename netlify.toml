@@ -42,3 +42,7 @@
 
 [functions."drive-browse"]
   timeout = 20
+
+[functions."drive-proxy"]
+  # Baixa vídeos do Drive (~100MB) — precisa de tempo generoso
+  timeout = 120
