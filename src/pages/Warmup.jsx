@@ -75,6 +75,7 @@ export default function Warmup() {
   const [driveJitterMin,  setDriveJitterMin]  = useState(10);
   const [driveCaption,    setDriveCaption]    = useState("");
   const [driveLoop,       setDriveLoop]       = useState(false);
+  const [driveShuffle,    setDriveShuffle]    = useState(false);
 
   // ─── Estado de importação do Drive (elevado para sobreviver à troca de aba) ──
   const [driveImportState, setDriveImportState] = useState(null);
@@ -243,6 +244,9 @@ export default function Warmup() {
 
       if (!pool.length) { alert("Nenhum arquivo encontrado. Adicione mídias na aba Upload e aguarde o import terminar."); return; }
 
+      // Embaralha se o usuário escolheu ordem aleatória
+      const orderedPool = driveShuffle ? [...pool].sort(() => Math.random() - 0.5) : pool;
+
       // 1 item por mídia com TODAS as contas — o scheduler explode em per_account
       const allAccounts = selectedAccounts.map(acc => ({
         id: acc.id, username: acc.username,
@@ -250,8 +254,8 @@ export default function Warmup() {
       }));
 
       const slots = [];
-      for (let i = 0; i < pool.length; i++) {
-        const media = pool[i];
+      for (let i = 0; i < orderedPool.length; i++) {
+        const media = orderedPool[i];
         const jitter = jitterMs > 0 ? (Math.random() * 2 - 1) * jitterMs : 0;
         const scheduledAt = startMs + i * gapMs + Math.round(jitter);
         const caption = parsedCaptions.length ? parsedCaptions[i % parsedCaptions.length] : driveCaption;
@@ -294,7 +298,7 @@ export default function Warmup() {
     } finally {
       setSaving(false);
     }
-  }, [selectedAccounts, parsedCaptions, captionMode, driveStartTime, driveGapMinutes, driveJitterMin, drivePostType, driveCaption, addBatch]);
+  }, [selectedAccounts, parsedCaptions, captionMode, driveStartTime, driveGapMinutes, driveJitterMin, drivePostType, driveCaption, driveShuffle, addBatch]);
 
   const cancelWarmupQueue = useCallback(async () => {
     if (!window.confirm("Cancelar toda a fila de aquecimento pendente? Posts já publicados não serão desfeitos.")) return;
@@ -812,6 +816,14 @@ export default function Warmup() {
                   <option value={15}>± 15 min</option>
                   <option value={20}>± 20 min</option>
                   <option value={30}>± 30 min</option>
+                </select>
+              </div>
+              <div>
+                <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>Ordem das mídias</div>
+                <select value={driveShuffle ? "random" : "order"} onChange={e=>setDriveShuffle(e.target.value==="random")}
+                  style={{ background:"var(--bg3)", color:"var(--fg)", border:"1px solid var(--border)", borderRadius:7, padding:"6px 10px", fontSize:13, width:"100%" }}>
+                  <option value="order">Em ordem (1ª, 2ª, 3ª...)</option>
+                  <option value="random">Aleatória 🎲</option>
                 </select>
               </div>
             </div>
