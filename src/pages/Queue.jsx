@@ -1,7 +1,8 @@
 // Queue.jsx — Fila de agendamentos com filtros de status + data
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useScheduler } from "../App.jsx";
+import { useScheduler, useAccounts } from "../App.jsx";
 import Modal from "../Modal.jsx";
+import DrivePicker from "../components/DrivePicker.jsx";
 
 const SORT_OPTIONS = [
   { value: "time_asc",   label: "🕐 Mais cedo primeiro"  },
@@ -87,7 +88,9 @@ function buildDayGroups(items) {
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 export default function Queue() {
-  const { queue, updateItem, removeItem, clearQueue, reload: reloadQueue } = useScheduler();
+  const { queue, updateItem, removeItem, clearQueue, addBatch, reload: reloadQueue } = useScheduler();
+  const { accounts } = useAccounts();
+  const [showDrivePicker, setShowDrivePicker] = useState(false);
   const [editModal,    setEditModal]    = useState(null);
   const [editTime,     setEditTime]     = useState("");
   const [editCaption,  setEditCaption]  = useState("");
@@ -236,6 +239,13 @@ export default function Queue() {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-ghost btn-sm" onClick={() => reloadQueue?.()}>↻ Atualizar</button>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setShowDrivePicker(true)}
+            title="Agendar vídeos do Google Drive"
+          >
+            📂 Google Drive
+          </button>
           {filtered.length > 0 && (
             <button
               className={`btn btn-sm ${selecting ? "btn-primary" : "btn-ghost"}`}
@@ -452,6 +462,14 @@ export default function Queue() {
         onConfirm={() => { removeItem(confirmModal.id); setConfirmModal(null); }} onCancel={() => setConfirmModal(null)} />
       <Modal open={confirmModal?.type === "removeSelected"} title={`Remover ${selected.size} item(s)?`} message={`${selected.size} agendamento(s) selecionado(s) serão removidos permanentemente.`} confirmLabel={`Remover ${selected.size}`} confirmDanger
         onConfirm={removeSelected} onCancel={() => setConfirmModal(null)} />
+
+      {showDrivePicker && (
+        <DrivePicker
+          accounts={accounts}
+          onSchedule={addBatch}
+          onClose={() => setShowDrivePicker(false)}
+        />
+      )}
     </div>
   );
 }
