@@ -132,28 +132,17 @@ async function recordPost(store, id, state, success) {
   await saveState(store, id, state);
 }
 
-// ─── Polling do container de video ───────────────────────────────────────────
-// FIX: aumentado de 5x4s (20s) para 12x6s (72s) — Reels frequentemente
-// levam 30-60s para processar. Com 20s jogava para o publish-finish cedo demais.
-async function waitForContainer(id, token) {
-  for (let i = 0; i < 12; i++) {
-    await sleep(6000);
-    try {
-      const r = await fetch(`${graph(token)}/${id}?fields=status_code&access_token=${token}`);
-      const d = await r.json();
-      if (d.status_code === "FINISHED") return { ready: true };
-      if (d.status_code === "ERROR")    return { ready: false, error: "Instagram: erro no processamento do video" };
-    } catch (_) {}
-  }
-  return { ready: false, pending: true, creation_id: id };
-}
-
 // ─── Publicacao por conta ─────────────────────────────────────────────────────
+// Para vídeos (Reels, Feed vídeo, Stories vídeo):
+//   1. Cria o container → Instagram começa a processar
+//   2. Retorna pending: true imediatamente com o creation_id
+//   3. O publish-finish (via scheduler) verifica depois quando está pronto e publica
+// Isso evita polling de 60-120s por conta dentro do publish, que travava a fila.
 async function publishOne({ account, media_url, media_type, post_type, caption }) {
   const token = account.access_token;
   if (!token) return { success: false, error: "Token nao encontrado. Reconecte a conta." };
 
-  // FIX: converte links do Google Drive para URL de download direto
+  // Converte links do Google Drive para URL de download direto
   const resolved_url = resolveGoogleDriveUrl(media_url);
 
   const isVideo = media_type === "VIDEO";
@@ -164,12 +153,10 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
     payload = { ...payload, video_url: resolved_url, media_type: "REELS", caption, share_to_feed: true };
   } else if (post_type === "FEED") {
     payload = isVideo
-      // FIX: era "REELS" — video no Feed deve usar "VIDEO"
       ? { ...payload, video_url: resolved_url, media_type: "VIDEO", caption }
       : { ...payload, image_url: resolved_url, media_type: "IMAGE", caption };
   } else if (post_type === "STORY") {
     payload = isVideo
-      // FIX: era "REELS" — story de video deve usar "STORIES"
       ? { ...payload, video_url: resolved_url, media_type: "STORIES" }
       : { ...payload, image_url: resolved_url, media_type: "STORIES" };
   }
@@ -189,12 +176,12 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
       return { success: false, error: errMsg, errorCode: cData.error.code };
     }
 
+    // Vídeos: retorna pending imediatamente — publish-finish cuida do resto
     if (isVideo || post_type === "REEL") {
-      const result = await waitForContainer(cData.id, token);
-      if (result.pending) return { success: false, pending: true, creation_id: cData.id, error: "Video processando. Sera publicado automaticamente em breve." };
-      if (!result.ready)  return { success: false, error: result.error };
+      return { success: false, pending: true, creation_id: cData.id };
     }
 
+    // Imagens: publica diretamente (sem processamento assíncrono)
     const pRes  = await fetch(`${graph(token)}/${account.id}/media_publish`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
