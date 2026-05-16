@@ -90,23 +90,23 @@ async function runItem(item) {
       for (const pr of pendingResults) {
         const vfId = `vf-${historyId}-${pr.account_id}`;
         await saveItem("queue", {
-          id:          vfId,
-          type:        "video_finish",
-          status:      "pending",
-          creation_id: pr.creation_id,
-          account_id:  pr.account_id,
-          username:    pr.username || pr.account_id,
-          accounts:    item.accounts,
-          // Tenta pela primeira vez 60s depois — dá tempo ao Instagram processar
-          scheduledAt: Date.now() + 60000,
-          historyId,             // ← aponta para o item do histórico para atualizar
+          id:            vfId,
+          type:          "video_finish",
+          status:        "pending",
+          creation_id:   pr.creation_id,
+          account_id:    pr.account_id,
+          username:      pr.username || pr.account_id,
+          accounts:      item.accounts,
+          scheduledAt:   Date.now() + 60000,
+          historyId,
+          parentQueueId: item.id,   // ← id do item pai na fila
           mediaUrl,
-          postType:    item.postType,
-          mediaType:   item.mediaType,
-          caption:     item.caption || "",
-          createdAt:   new Date().toISOString(),
-          attempts:    0,
-          maxAttempts: 8,        // 8 × 20s ≈ 2.5 min de janela total
+          postType:      item.postType,
+          mediaType:     item.mediaType,
+          caption:       item.caption || "",
+          createdAt:     new Date().toISOString(),
+          attempts:      0,
+          maxAttempts:   8,
         });
         console.log(`[SW] video_finish criado → @${pr.username} historyId:${historyId}`);
       }
@@ -312,20 +312,18 @@ async function runVideoFinish(item) {
 async function maybeCloseParentItem(historyId) {
   if (!historyId) return;
   try {
-    const queue   = await readQueue();
-    // Todos os video_finish deste historyId
+    const queue    = await readQueue();
     const siblings = queue.filter((x) => x.type === "video_finish" && x.historyId === historyId);
     if (siblings.length === 0) return;
 
     const allDone = siblings.every((x) => x.status === "done" || x.status === "error");
     if (!allDone) return;
 
-    // Encontra o item pai (o item original que gerou esses video_finish)
-    // O pai tem id que é prefixo do historyId: historyId = "h-{timestamp}-{mi}"
-    // O pai tem status "done" com results vazio (colocado assim quando o runItem terminou)
-    const parent = queue.find((x) => !x.type && x.status === "done" &&
-      siblings.some((s) => s.accounts?.some?.((a) => x.accounts?.some?.((pa) => pa.id === a.id)))
-    );
+    // Usa o parentQueueId salvo no video_finish para encontrar o pai diretamente
+    const parentQueueId = siblings[0]?.parentQueueId;
+    const parent = parentQueueId
+      ? queue.find((x) => x.id === parentQueueId)
+      : null;
 
     const ok    = siblings.filter((s) => s.status === "done").length;
     const total = siblings.length;
@@ -333,7 +331,6 @@ async function maybeCloseParentItem(historyId) {
 
     console.log(`[SW] grupo ${historyId} concluído — ${ok}/${total} publicados`);
 
-    // Atualiza o pai com resultado final consolidado
     if (parent) {
       const results = siblings.map((s) => ({
         account_id:   s.account_id,
@@ -351,7 +348,8 @@ async function maybeCloseParentItem(historyId) {
       });
     }
 
-    // Notificação final do grupo
+    notifyClients({ type: "QUEUE_UPDATE" });
+
     try {
       if (Notification.permission === "granted") {
         self.registration.showNotification("Insta Manager", {
