@@ -501,22 +501,53 @@ export default function Warmup() {
           {/* Seletor de modo */}
           <div className="card">
             <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>⚙️ Modo de Configuração</div>
-            <div style={{ display: "flex", gap: 8 }}>
-              {[
-                { id: "preset", icon: "📅", label: "Por Dia",     desc: "Define posts por tipo em cada dia (Dia 1, Dia 2, Dia 3...)" },
-                { id: "target", icon: "🎯", label: "Por Meta",    desc: "Define quantidade + período e o sistema distribui automaticamente" },
-              ].map(({ id, icon, label, desc }) => (
-                <button key={id} onClick={() => setConfigMode(id)} style={{
-                  flex: 1, padding: "12px 14px", borderRadius: 10, cursor: "pointer", textAlign: "left",
-                  border: `1.5px solid ${configMode === id ? "var(--accent)" : "var(--border)"}`,
-                  background: configMode === id ? "rgba(124,92,252,0.08)" : "var(--bg3)",
-                  transition: "all 0.15s",
-                }}>
-                  <div style={{ fontSize: 20, marginBottom: 4 }}>{icon}</div>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: configMode === id ? "var(--accent-light)" : "var(--text)" }}>{label}</div>
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{desc}</div>
-                </button>
-              ))}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {/* Por Dia */}
+              <button onClick={() => setConfigMode("preset")} style={{
+                flex: 1, minWidth: 140, padding: "12px 14px", borderRadius: 10, cursor: "pointer", textAlign: "left",
+                border: `1.5px solid ${configMode === "preset" ? "var(--accent)" : "var(--border)"}`,
+                background: configMode === "preset" ? "rgba(124,92,252,0.08)" : "var(--bg3)",
+                transition: "all 0.15s",
+              }}>
+                <div style={{ fontSize: 20, marginBottom: 4 }}>📅</div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: configMode === "preset" ? "var(--accent-light)" : "var(--text)" }}>Por Dia</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>Define posts por tipo em cada dia (Dia 1, Dia 2, Dia 3...)</div>
+              </button>
+
+              {/* Por Meta */}
+              <button onClick={() => setConfigMode("target")} style={{
+                flex: 1, minWidth: 140, padding: "12px 14px", borderRadius: 10, cursor: "pointer", textAlign: "left",
+                border: `1.5px solid ${configMode === "target" ? "var(--accent)" : "var(--border)"}`,
+                background: configMode === "target" ? "rgba(124,92,252,0.08)" : "var(--bg3)",
+                transition: "all 0.15s",
+              }}>
+                <div style={{ fontSize: 20, marginBottom: 4 }}>🎯</div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: configMode === "target" ? "var(--accent-light)" : "var(--text)" }}>Por Meta</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>Define quantidade + período e o sistema distribui automaticamente</div>
+              </button>
+
+              {/* Google Drive */}
+              <button onClick={() => setConfigMode("drive")} style={{
+                flex: 1, minWidth: 140, padding: "12px 14px", borderRadius: 10, cursor: "pointer", textAlign: "left",
+                border: `1.5px solid ${configMode === "drive" ? "rgba(66,133,244,0.7)" : "var(--border)"}`,
+                background: configMode === "drive"
+                  ? "linear-gradient(135deg, rgba(66,133,244,0.1) 0%, rgba(52,168,83,0.07) 50%, rgba(251,188,5,0.06) 100%)"
+                  : "var(--bg3)",
+                transition: "all 0.15s",
+              }}>
+                <div style={{ marginBottom: 6 }}>
+                  <svg width="24" height="24" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
+                    <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+                    <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
+                    <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
+                    <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+                    <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+                    <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 27h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+                  </svg>
+                </div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: configMode === "drive" ? "#4285f4" : "var(--text)" }}>Google Drive</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>Agenda posts direto do seu Drive com horário e intervalo personalizados</div>
+              </button>
             </div>
           </div>
 
@@ -723,9 +754,10 @@ export default function Warmup() {
             )}
           </div>
 
-          {/* Configurações gerais — ambos os modos */}
+          {/* Configurações gerais — ambos os modos Por Dia e Por Meta */}
+          {configMode !== "drive" && (
           <div className="card">
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 14 }}>📸 DISTRIBUIÇÃO DE MÍDIAS</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 14 }}>📸 Distribuição de Mídias</div>
             <div style={{ display: "flex", gap: 6 }}>
               {[{ id: "roundrobin", label: "🔄 Round-robin" }, { id: "random", label: "🎲 Aleatório" }].map(({ id, label }) => (
                 <button key={id} onClick={() => setDistribution(id)} style={{
@@ -738,40 +770,65 @@ export default function Warmup() {
               ))}
             </div>
           </div>
+          )}
 
-          {/* ── Configuração de Agendamento via Drive ── */}
-          <div className="card">
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 14 }}>
-              <svg width="14" height="14" viewBox="0 0 48 48" style={{ display:"inline",verticalAlign:"middle",marginRight:6 }}>
-                <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.8 2.2 30.3 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.8 6C12.2 13 17.7 9.5 24 9.5z"/>
-                <path fill="#4285F4" d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4 6.9-10 6.9-17z"/>
-                <path fill="#FBBC05" d="M10.4 28.7A14.6 14.6 0 0 1 9.5 24c0-1.6.3-3.2.9-4.7L2.6 13.3A23.9 23.9 0 0 0 0 24c0 3.8.9 7.4 2.6 10.6l7.8-5.9z"/>
-                <path fill="#34A853" d="M24 48c6.3 0 11.6-2.1 15.5-5.6l-7.5-5.8c-2.1 1.4-4.8 2.3-8 2.3-6.3 0-11.7-4.2-13.6-10l-7.8 6C6.6 42.6 14.6 48 24 48z"/>
-              </svg>
-              Configuração de Agendamento (Drive)
-            </div>
-            <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10 }}>
-              <div>
-                <div style={{ fontSize:11,color:"var(--muted)",marginBottom:4 }}>
-                  Início <span style={{ color:"var(--accent-light)",fontWeight:600 }}>(horário de Brasília)</span>
-                </div>
-                <input type="datetime-local" value={driveStartTime} onChange={e=>setDriveStartTime(e.target.value)}
-                  style={{ background:"var(--bg3)",color:"var(--fg)",border:"1px solid var(--border)",borderRadius:7,padding:"6px 10px",fontSize:13,width:"100%" }} />
-                <div style={{ fontSize:10,color:"var(--muted)",marginTop:3 }}>🇧🇷 BRT (UTC-3) — padrão: agora + 15 min</div>
+          {/* ══ Modo Google Drive ══════════════════════════════════════════════════ */}
+          {configMode === "drive" && (
+          <div className="card" style={{
+            border: "1px solid rgba(66,133,244,0.3)",
+            background: "linear-gradient(135deg, rgba(66,133,244,0.04) 0%, rgba(52,168,83,0.03) 50%, rgba(251,188,5,0.03) 100%)",
+          }}>
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: 11,
+                background: "rgba(255,255,255,0.07)",
+                border: "1px solid rgba(66,133,244,0.25)",
+                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+              }}>
+                <svg width="24" height="24" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
+                  <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+                  <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
+                  <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
+                  <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+                  <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+                  <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 27h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+                </svg>
               </div>
               <div>
-                <div style={{ fontSize:11,color:"var(--muted)",marginBottom:4 }}>Tipo de post</div>
+                <div style={{ fontWeight: 700, fontSize: 15, color: "#4285f4" }}>Google Drive</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 1 }}>
+                  Agendamento direto da sua nuvem
+                </div>
+              </div>
+            </div>
+
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>
+              Configuração de Agendamento
+            </div>
+
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>
+                  Início <span style={{ color:"var(--accent-light)", fontWeight:600 }}>(Brasília)</span>
+                </div>
+                <input type="datetime-local" value={driveStartTime} onChange={e=>setDriveStartTime(e.target.value)}
+                  style={{ background:"var(--bg3)", color:"var(--fg)", border:"1px solid var(--border)", borderRadius:7, padding:"6px 10px", fontSize:13, width:"100%" }} />
+                <div style={{ fontSize:10, color:"var(--muted)", marginTop:3 }}>🇧🇷 BRT (UTC-3) — padrão: agora + 15 min</div>
+              </div>
+              <div>
+                <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>Tipo de post</div>
                 <select value={drivePostType} onChange={e=>setDrivePostType(e.target.value)}
-                  style={{ background:"var(--bg3)",color:"var(--fg)",border:"1px solid var(--border)",borderRadius:7,padding:"6px 10px",fontSize:13,width:"100%" }}>
-                  <option value="REEL">Reel</option>
-                  <option value="FEED">Feed (vídeo)</option>
-                  <option value="STORY">Story</option>
+                  style={{ background:"var(--bg3)", color:"var(--fg)", border:"1px solid var(--border)", borderRadius:7, padding:"6px 10px", fontSize:13, width:"100%" }}>
+                  <option value="REEL">🎬 Reel</option>
+                  <option value="FEED">🖼 Feed (vídeo)</option>
+                  <option value="STORY">⭕ Story</option>
                 </select>
               </div>
               <div>
-                <div style={{ fontSize:11,color:"var(--muted)",marginBottom:4 }}>Intervalo entre posts</div>
+                <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>Intervalo entre posts</div>
                 <select value={driveGapMinutes} onChange={e=>setDriveGapMinutes(Number(e.target.value))}
-                  style={{ background:"var(--bg3)",color:"var(--fg)",border:"1px solid var(--border)",borderRadius:7,padding:"6px 10px",fontSize:13,width:"100%" }}>
+                  style={{ background:"var(--bg3)", color:"var(--fg)", border:"1px solid var(--border)", borderRadius:7, padding:"6px 10px", fontSize:13, width:"100%" }}>
                   <option value={10}>10 min</option>
                   <option value={30}>30 min</option>
                   <option value={60}>1 hora</option>
@@ -782,9 +839,9 @@ export default function Warmup() {
                 </select>
               </div>
               <div>
-                <div style={{ fontSize:11,color:"var(--muted)",marginBottom:4 }}>Variação (jitter)</div>
+                <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>Variação (jitter)</div>
                 <select value={driveJitterMin} onChange={e=>setDriveJitterMin(Number(e.target.value))}
-                  style={{ background:"var(--bg3)",color:"var(--fg)",border:"1px solid var(--border)",borderRadius:7,padding:"6px 10px",fontSize:13,width:"100%" }}>
+                  style={{ background:"var(--bg3)", color:"var(--fg)", border:"1px solid var(--border)", borderRadius:7, padding:"6px 10px", fontSize:13, width:"100%" }}>
                   <option value={0}>Sem variação</option>
                   <option value={5}>± 5 min</option>
                   <option value={10}>± 10 min</option>
@@ -794,22 +851,29 @@ export default function Warmup() {
                 </select>
               </div>
             </div>
-            <div style={{ marginTop:10 }}>
-              <div style={{ fontSize:11,color:"var(--muted)",marginBottom:4 }}>Legenda (opcional)</div>
+
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>Legenda (opcional)</div>
               <textarea value={driveCaption} onChange={e=>setDriveCaption(e.target.value)}
                 placeholder="Escreva a legenda dos posts do Drive..."
                 rows={2}
-                style={{ background:"var(--bg3)",color:"var(--fg)",border:"1px solid var(--border)",borderRadius:7,padding:"6px 10px",fontSize:13,width:"100%",resize:"vertical",fontFamily:"inherit" }} />
+                style={{ background:"var(--bg3)", color:"var(--fg)", border:"1px solid var(--border)", borderRadius:7, padding:"6px 10px", fontSize:13, width:"100%", resize:"vertical", fontFamily:"inherit" }} />
             </div>
-            <div style={{ marginTop:10,display:"flex",alignItems:"center",gap:10 }}>
-              <label style={{ display:"flex",alignItems:"center",gap:7,cursor:"pointer",userSelect:"none",fontSize:12,color:driveLoop?"var(--accent-light)":"var(--muted)" }}>
-                <div onClick={()=>setDriveLoop(v=>!v)} style={{ width:36,height:20,borderRadius:10,position:"relative",background:driveLoop?"var(--accent)":"var(--bg3)",border:`1px solid ${driveLoop?"var(--accent)":"var(--border)"}`,transition:"all 0.2s",cursor:"pointer",flexShrink:0 }}>
-                  <div style={{ position:"absolute",top:2,left:driveLoop?17:2,width:14,height:14,borderRadius:"50%",background:"#fff",transition:"left 0.2s" }} />
+
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
+              <label style={{ display:"flex", alignItems:"center", gap:7, cursor:"pointer", userSelect:"none", fontSize:12, color:driveLoop?"var(--accent-light)":"var(--muted)" }}>
+                <div onClick={()=>setDriveLoop(v=>!v)} style={{ width:36, height:20, borderRadius:10, position:"relative", background:driveLoop?"var(--accent)":"var(--bg3)", border:`1px solid ${driveLoop?"var(--accent)":"var(--border)"}`, transition:"all 0.2s", cursor:"pointer", flexShrink:0 }}>
+                  <div style={{ position:"absolute", top:2, left:driveLoop?17:2, width:14, height:14, borderRadius:"50%", background:"#fff", transition:"left 0.2s" }} />
                 </div>
                 🔁 Loop diário
               </label>
             </div>
+
+            <div style={{ marginTop: 16, padding:"9px 12px", borderRadius:8, background:"rgba(66,133,244,0.06)", border:"1px solid rgba(66,133,244,0.15)", fontSize:11, color:"var(--muted)", lineHeight:1.6 }}>
+              <span style={{ color:"#4285f4", fontWeight:700 }}>Como usar:</span> selecione os vídeos no seletor do Drive (aba Upload de Mídias), configure o horário e intervalo acima, depois clique em <b>Gerar Fila</b>.
+            </div>
           </div>
+          )}
 
           {/* Blocos exclusivos do modo Preset */}
           {configMode === "preset" && (<>
