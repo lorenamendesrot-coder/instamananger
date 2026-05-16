@@ -48,11 +48,9 @@ export const WARMUP_PRESET_2D = {
 };
 
 export const TABS = [
-  { id: "upload",   icon: "📤", label: "Upload"          },
-  { id: "captions", icon: "💬", label: "Legendas"        },
-  { id: "config",   icon: "⚙️",  label: "Configuração"   },
-  { id: "preview",  icon: "📅", label: "Preview da Fila" },
-  { id: "monitor",  icon: "📊", label: "Monitor"         },
+  { id: "upload",   icon: "📤", label: "Upload"        },
+  { id: "captions", icon: "💬", label: "Legendas"      },
+  { id: "config",   icon: "⚙️",  label: "Configuração" },
 ];
 
 export const MEDIA_TYPES = [
