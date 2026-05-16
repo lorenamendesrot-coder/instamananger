@@ -485,7 +485,7 @@ function QueueList({ items, filterDay, vfByParent, paByHistory, activeVfParentId
   );
 }
 
-// ─── QueueItem — card redesenhado ─────────────────────────────────────────────
+// ─── QueueItem — modelo clássico ──────────────────────────────────────────────
 function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onForce, forcingId, selecting, isSelected, onToggleSelect }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -533,225 +533,197 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   const visibleAccs = accs.slice(0, 6);
   const hiddenAccs  = accs.length - 6;
 
+  const isGroup     = item.type === "group";
+  const paTotal     = paItems?.length || 0;
+  const paDone      = paItems?.filter(p => p.status === "done" || p.status === "error").length || 0;
+  const paRunning   = paItems?.filter(p => p.status === "running").length || 0;
+  const hasActivePa = paItems?.some(p => p.status === "pending" || p.status === "running");
+  const allPaDone   = paTotal > 0 && paDone >= paTotal;
+
+  const isPublishing    = (item.status === "done" || item.status === "running") && (hasActiveVf || hasActivePa) && !allPaDone;
+  const effectiveStatus = isPublishing ? "running" : item.status;
+  const isOverdue = item.status === "pending" && item.scheduledAt < Date.now() && !item.runCount;
+  const ss = isOverdue
+    ? { color: "var(--warning)", bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.30)", icon: "⚠" }
+    : statusStyle(effectiveStatus);
+
+  const scheduledDate = new Date(item.scheduledAt);
+  const isPast        = isOverdue;
+  const mediaCount    = item.mediaUrls?.length || 1;
+  const qty           = item.quantityPerCycle || 1;
+
+  const results  = item.results || [];
+  const resOk    = results.filter(r => r.success);
+  const resFail  = results.filter(r => !r.success && !r.retrying);
+  const hasResults = results.length > 0;
+
+  const vfDone  = (vfItems || []).filter(v => v.status === "done").length;
+  const vfTotal = (vfItems || []).length;
+
+  const subItems = isGroup && paItems?.length
+    ? paItems.map(pa => ({ username: pa.username, status: pa.status, error: pa.error && !pa.skippedForRetry ? pa.error : null, retrying: pa.skippedForRetry }))
+    : (vfItems || []).map(vf => ({ username: vf.username, status: vf.status, error: vf.error || null, attempts: vf.attempts }));
+
+  const hasSubItems = subItems.length > 0;
+  const canExpand   = hasSubItems || hasResults;
+  const accs        = item.accounts || [];
+
+  // Badge de status label
+  let statusLabel = "Agendado";
+  if (isPublishing && isGroup) statusLabel = `Publicando ${paDone}/${paTotal}`;
+  else if (isPublishing)       statusLabel = `Publicando ${vfDone}/${vfTotal}`;
+  else if (effectiveStatus === "done")    statusLabel = "Publicado";
+  else if (effectiveStatus === "error")   statusLabel = "Erro";
+  else if (effectiveStatus === "running") statusLabel = "Rodando";
+  else if (item.runCount > 0)  statusLabel = "Próximo ciclo";
+  else if (isPast)             statusLabel = "Atrasado";
+
   return (
     <div style={{
-      borderRadius: 12,
+      borderRadius: 10,
       border: `1px solid ${isSelected ? "var(--accent)" : ss.border}`,
       borderLeft: `3px solid ${isSelected ? "var(--accent)" : ss.color}`,
       background: isSelected ? "rgba(124,92,252,0.07)" : "var(--bg2)",
       overflow: "hidden",
       transition: "all 0.15s",
-      cursor: selecting ? "pointer" : (hasSubItems || hasResults) ? "pointer" : "default",
     }}>
 
       {/* ── Linha principal ── */}
       <div
-        style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: selecting ? "pointer" : (hasSubItems || hasResults) ? "pointer" : "default", userSelect: "none" }}
-        onClick={selecting ? () => onToggleSelect(item.id) : (hasSubItems || hasResults) ? (e) => { e.stopPropagation(); setExpanded(p => !p); } : undefined}
+        style={{ padding: "10px 12px", cursor: selecting ? "pointer" : canExpand ? "pointer" : "default", userSelect: "none" }}
+        onClick={selecting ? () => onToggleSelect(item.id) : canExpand ? (e) => { e.stopPropagation(); setExpanded(p => !p); } : undefined}
       >
 
-        {/* Checkbox seleção */}
-        {selecting && (
-          <div style={{ width: 18, height: 18, borderRadius: 4, flexShrink: 0, border: `2px solid ${isSelected ? "var(--accent)" : "var(--border2)"}`, background: isSelected ? "var(--accent)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {isSelected && <span style={{ color: "#fff", fontSize: 10, fontWeight: 900 }}>✓</span>}
-          </div>
-        )}
+        {/* Linha 1: badges + horário + ações */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
 
-        {/* Thumbnail / ícone */}
-        <div style={{ width: 44, height: 44, borderRadius: 8, flexShrink: 0, overflow: "hidden", background: "var(--bg3)", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", border: "1px solid var(--border)" }}>
-          {thumbUrl
-            ? <img src={thumbUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
-            : <span style={{ fontSize: 20 }}>🎬</span>}
-          {mediaCount > 1 && (
-            <span style={{ position: "absolute", bottom: 2, right: 2, background: "rgba(0,0,0,0.7)", color: "#fff", fontSize: 8, fontWeight: 700, borderRadius: 4, padding: "1px 3px" }}>×{mediaCount}</span>
-          )}
-        </div>
-
-        {/* Corpo central */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-
-          {/* Linha 1: status + tipo + horário */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
-            {/* Badge de status */}
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: ss.bg, color: ss.color, border: `1px solid ${ss.border}`, letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
-              {isPublishing && isGroup
-                ? <>{ss.icon} Publicando {paDone}/{paTotal}{paRunning > 0 ? ` · ${paRunning} agora` : ""}</>
-                : isPublishing
-                  ? <>{ss.icon} Publicando vídeos {vfDone}/{vfTotal}</>
-                  : <>{ss.icon} {effectiveStatus === "done" ? "Publicado" : effectiveStatus === "error" ? "Erro" : effectiveStatus === "running" ? "Rodando" : (item.runCount > 0 ? "Próximo ciclo" : isPast ? "⚠ Atrasado" : "Agendado")}</>}
-            </span>
-
-            {/* Tipo de post */}
-            <span style={{ fontSize: 10, color: "var(--muted)", background: "var(--bg3)", border: "1px solid var(--border)", padding: "2px 7px", borderRadius: 20, whiteSpace: "nowrap" }}>
-              {item.mediaType === "IMAGE" ? "🖼" : "🎬"} {item.postType}
-            </span>
-
-            {/* Badges extras */}
-            {qty > 1 && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent-light)", background: "rgba(124,92,252,0.12)", border: "1px solid rgba(124,92,252,0.3)", padding: "2px 6px", borderRadius: 20 }}>×{qty}/ciclo</span>}
-            {item.loop && <span style={{ fontSize: 10, color: "var(--accent-light)", background: "rgba(124,92,252,0.08)", border: "1px solid rgba(124,92,252,0.2)", padding: "2px 6px", borderRadius: 20 }}>🔁 loop</span>}
-            {item.runCount > 0 && <span style={{ fontSize: 9, color: "var(--muted)" }}>×{item.runCount} runs</span>}
-
-            {/* Horário — empurrado para direita */}
-            <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: isPast ? 700 : 500, color: isPast ? "var(--warning)" : "var(--muted)", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
-              🕐 {scheduledDate.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
-              {isPast && <span style={{ color: "var(--warning)", fontSize: 12 }}>⚠</span>}
-            </span>
-          </div>
-
-          {/* Linha 2: avatares das contas */}
-          <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-            {visibleAccs.map((a, i) => (
-              <div key={a.id || i} style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 20, padding: "2px 8px 2px 4px" }}>
-                <AccAvatar acc={a} size={18} />
-                <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text2)", whiteSpace: "nowrap" }}>@{a.username || "—"}</span>
-              </div>
-            ))}
-            {hiddenAccs > 0 && (
-              <span style={{ fontSize: 10, color: "var(--muted)", background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 20, padding: "2px 8px" }}>
-                +{hiddenAccs} conta{hiddenAccs !== 1 ? "s" : ""}
-              </span>
-            )}
-          </div>
-
-          {/* Erro de item (quando o próprio post falhou) */}
-          {item.error && effectiveStatus === "error" && (
-            <div style={{ marginTop: 6, fontSize: 11, color: "var(--danger)", background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 6, padding: "4px 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              ✗ {item.error}
+          {/* Checkbox */}
+          {selecting && (
+            <div style={{ width: 16, height: 16, borderRadius: 4, flexShrink: 0, border: `2px solid ${isSelected ? "var(--accent)" : "var(--border2)"}`, background: isSelected ? "var(--accent)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", marginRight: 4 }}>
+              {isSelected && <span style={{ color: "#fff", fontSize: 9, fontWeight: 900 }}>✓</span>}
             </div>
           )}
-        </div>
 
-        {/* Ações — direita */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0, alignItems: "flex-end" }}>
-          <div style={{ display: "flex", gap: 4 }}>
+          {/* Badge status */}
+          <span style={{
+            display: "inline-flex", alignItems: "center", gap: 4,
+            fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20,
+            background: ss.bg, color: ss.color, border: `1px solid ${ss.border}`,
+            whiteSpace: "nowrap",
+          }}>
+            {ss.icon} {statusLabel}
+          </span>
+
+          {/* Badge tipo */}
+          <span style={{
+            fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 20,
+            background: "var(--bg3)", color: "var(--muted)", border: "1px solid var(--border)",
+            whiteSpace: "nowrap",
+          }}>
+            {item.mediaType === "IMAGE" ? "🖼" : "🎬"} {item.postType}
+          </span>
+
+          {qty > 1 && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--accent-light)", background: "rgba(124,92,252,0.12)", border: "1px solid rgba(124,92,252,0.3)", padding: "2px 6px", borderRadius: 20 }}>×{qty}/ciclo</span>}
+          {item.loop && <span style={{ fontSize: 10, color: "var(--accent-light)", background: "rgba(124,92,252,0.08)", border: "1px solid rgba(124,92,252,0.2)", padding: "2px 6px", borderRadius: 20 }}>🔁</span>}
+
+          {/* Horário + ações — lado direito */}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            <span style={{ fontSize: 11, fontWeight: isPast ? 700 : 500, color: isPast ? "var(--warning)" : "var(--muted)", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
+              🕐 {scheduledDate.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+              {isPast && <span style={{ color: "var(--warning)", fontSize: 13 }}>⚠</span>}
+            </span>
+
             {(item.status === "pending" || item.status === "error") && (
               <button title="Publicar agora" disabled={forcingId === item.id}
                 onClick={e => { e.stopPropagation(); onForce(item); }}
-                style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid rgba(245,158,11,0.3)", background: "rgba(245,158,11,0.08)", color: "var(--warning)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                style={{ width: 26, height: 26, borderRadius: 7, border: "1px solid rgba(245,158,11,0.35)", background: "rgba(245,158,11,0.1)", color: "var(--warning)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {forcingId === item.id ? <span className="spinner" style={{ width: 10, height: 10 }} /> : "⚡"}
               </button>
             )}
             {(item.status === "pending" || item.status === "error") && (
               <button title="Editar horário"
                 onClick={e => { e.stopPropagation(); onEdit(item); }}
-                style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg3)", color: "var(--muted)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                style={{ width: 26, height: 26, borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg3)", color: "var(--muted)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 ✎
               </button>
             )}
             <button title="Remover"
               onClick={e => { e.stopPropagation(); onRemove(item.id); }}
-              style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.06)", color: "var(--danger)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              style={{ width: 26, height: 26, borderRadius: 7, border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.07)", color: "var(--danger)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
               ✕
             </button>
+            {canExpand && (
+              <span style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1 }}>{expanded ? "▲" : "▼"}</span>
+            )}
           </div>
+        </div>
 
-          {/* Indicador de expandir — clique no card inteiro para expandir */}
-          {(hasSubItems || hasResults) && (
-            <div style={{ fontSize: 11, color: "var(--muted)", padding: "2px 0", display: "flex", alignItems: "center", gap: 3, pointerEvents: "none" }}>
-              {expanded ? "▲" : "▼"}
+        {/* Linha 2: avatares das contas */}
+        <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+          {accs.map((a, i) => (
+            <div key={a.id || i} style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 20, padding: "2px 8px 2px 4px" }}>
+              <AccAvatar acc={a} size={18} />
+              <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text2)", whiteSpace: "nowrap" }}>@{a.username || "—"}</span>
+            </div>
+          ))}
+          {item.error && effectiveStatus === "error" && (
+            <div style={{ marginLeft: 6, fontSize: 10, color: "var(--danger)", background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 6, padding: "2px 8px" }}>
+              ✗ {item.error}
             </div>
           )}
         </div>
       </div>
 
-      {/* ── Seção expandida: sub-items (per_account / video_finish) ── */}
-      {/* ── Seção unificada: todas as contas (em progresso + concluídas) ── */}
-      {expanded && (hasSubItems || hasResults) && (() => {
-        // Monta lista unificada: subItems (pending/running) + results (done/error)
-        // Evita duplicatas: se a conta já está em results, não mostra em subItems
+      {/* ── Expandido: lista de contas ── */}
+      {expanded && canExpand && (() => {
         const resultUsernames = new Set(results.map(r => r.username));
         const pendingSubItems = subItems.filter(s => !resultUsernames.has(s.username));
-        const totalContas = accs.length || (pendingSubItems.length + results.length);
 
         return (
           <div style={{ borderTop: "1px solid var(--border)", background: "var(--bg3)" }}>
-
-            {/* Barra de resumo */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", flexWrap: "wrap" }}>
-              {/* Contadores de status */}
-              {subItems.filter(s => !resultUsernames.has(s.username) && (s.status === "running")).length > 0 && (
-                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--warning)", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 20, padding: "2px 10px" }}>
-                  ⟳ {subItems.filter(s => !resultUsernames.has(s.username) && s.status === "running").length} publicando
-                </span>
-              )}
-              {subItems.filter(s => !resultUsernames.has(s.username) && (s.status === "pending")).length > 0 && (
-                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--info)", background: "rgba(56,189,248,0.12)", border: "1px solid rgba(56,189,248,0.3)", borderRadius: 20, padding: "2px 10px" }}>
-                  ⏳ {subItems.filter(s => !resultUsernames.has(s.username) && s.status === "pending").length} aguardando
-                </span>
-              )}
-              {resOk.length > 0 && (
-                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--success)", background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 20, padding: "2px 10px" }}>
-                  ✅ {resOk.length} publicado{resOk.length > 1 ? "s" : ""}
-                </span>
-              )}
-              {resRetry.length > 0 && (
-                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--warning)", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 20, padding: "2px 10px" }}>
-                  ↻ {resRetry.length} retry
-                </span>
-              )}
-              {resFail.length > 0 && (
-                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--danger)", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 20, padding: "2px 10px" }}>
-                  ❌ {resFail.length} falhou{resFail.length > 1 ? "ram" : ""}
-                </span>
-              )}
-              <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--muted)" }}>
-                {results.length}/{totalContas} contas
+            {/* Contador */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", padding: "6px 14px 4px", gap: 8 }}>
+              <span style={{ fontSize: 10, color: "var(--muted)" }}>
+                {results.length}/{accs.length || (pendingSubItems.length + results.length)} contas
               </span>
             </div>
 
-            {/* Grid unificado: em progresso primeiro, depois concluídos */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 3, padding: "0 14px 12px" }}>
-
-              {/* Contas ainda em progresso (pending/running) */}
+            {/* Contas em progresso */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: "0 10px 10px" }}>
               {pendingSubItems.map((sub, i) => {
                 const s = statusStyle(sub.status);
                 return (
-                  <div key={"sub-" + i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, background: s.bg, border: `1px solid ${s.border}` }}>
-                    <span style={{ fontSize: 14, flexShrink: 0 }}>{sub.label ? "🎬" : s.icon}</span>
+                  <div key={"sub-" + i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 7, background: s.bg, border: `1px solid ${s.border}` }}>
+                    <AccAvatar acc={{ username: sub.username }} size={20} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>@{sub.username}</div>
-                      <div style={{ fontSize: 10, color: s.color, display: "flex", alignItems: "center", gap: 6 }}>
-                        {sub.status === "running" ? "Publicando…" : sub.status === "pending" ? "Aguardando…" : sub.status === "done" ? "Publicado" : sub.status === "error" ? "Erro" : sub.status}
-                        {sub.retrying && <span style={{ color: "var(--warning)" }}>retry</span>}
-                        {sub.attempts > 0 && <span style={{ color: "var(--muted)" }}>×{sub.attempts + 1} tentativas</span>}
-                      </div>
-                      {sub.error && (
-                        <div style={{ fontSize: 10, color: "var(--danger)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={sub.error}>
-                          {sub.error}
-                        </div>
-                      )}
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>@{sub.username}</span>
                     </div>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: s.color }}>
+                      {sub.status === "running" ? "Publicando…" : sub.status === "pending" ? "Aguardando…" : sub.status === "done" ? "Publicado" : sub.status === "error" ? "Erro" : sub.status}
+                    </span>
                   </div>
                 );
               })}
 
-              {/* Contas com resultado final */}
+              {/* Contas com resultado */}
               {results.map((r, i) => {
                 const isRetrying = !r.success && r.retrying;
                 const rs = r.success ? statusStyle("done") : isRetrying ? statusStyle("running") : statusStyle("error");
                 return (
-                  <div key={"res-" + i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, background: rs.bg, border: `1px solid ${rs.border}` }}>
-                    <span style={{ fontSize: 14, flexShrink: 0 }}>{r.success ? "✅" : isRetrying ? "⟳" : "❌"}</span>
+                  <div key={"res-" + i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 7, background: rs.bg, border: `1px solid ${rs.border}` }}>
+                    <AccAvatar acc={{ username: r.username }} size={20} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>@{r.username}</div>
-                      {r.success ? (
-                        <div style={{ fontSize: 10, color: "var(--success)", display: "flex", alignItems: "center", gap: 6 }}>
-                          Publicado
-                          {r.published_at && <span style={{ color: "var(--muted)" }}>{new Date(r.published_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>}
-                          {r.media_id && <a href={`https://www.instagram.com/p/${r.media_id}/`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent-light)", fontWeight: 700 }} title="Ver no Instagram">↗</a>}
-                        </div>
-                      ) : isRetrying ? (
-                        <div style={{ fontSize: 10, color: "var(--warning)", fontStyle: "italic" }}>Retry em andamento…</div>
-                      ) : (
-                        <div style={{ fontSize: 10, color: "var(--danger)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.error}>
-                          {r.error || "Erro desconhecido"}
-                        </div>
-                      )}
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>@{r.username}</span>
                     </div>
-                    {r.attempts > 1 && (
-                      <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0, background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 20, padding: "1px 7px" }}>
-                        ×{r.attempts} tent.
-                      </span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: rs.color, display: "flex", alignItems: "center", gap: 6 }}>
+                      {r.success ? "Publicado" : isRetrying ? "Retry…" : "Erro"}
+                      {r.success && r.media_id && (
+                        <a href={`https://www.instagram.com/p/${r.media_id}/`} target="_blank" rel="noopener noreferrer"
+                          style={{ color: "var(--accent-light)", fontWeight: 700, fontSize: 12 }} title="Ver no Instagram">↗</a>
+                      )}
+                    </span>
+                    {!r.success && !isRetrying && r.error && (
+                      <span style={{ fontSize: 10, color: "var(--danger)", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.error}>{r.error}</span>
                     )}
                   </div>
                 );
