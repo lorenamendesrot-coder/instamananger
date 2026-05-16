@@ -270,17 +270,31 @@ export const handler = async (event) => {
     console.warn("[publish] Blobs nao configurado, rate-limit desativado:", err.message);
   }
 
-  const batch     = accounts.slice(batch_offset, batch_offset + BATCH_SIZE);
-  const next      = batch_offset + BATCH_SIZE;
-  const has_more  = next < accounts.length;
+  const batch    = accounts.slice(batch_offset, batch_offset + BATCH_SIZE);
+  const next     = batch_offset + BATCH_SIZE;
+  const has_more = next < accounts.length;
 
-  console.log(`[publish] batch ${batch_offset}-${batch_offset + batch.length - 1} de ${accounts.length} conta(s)`);
+  console.log(`[publish] batch ${batch_offset}-${batch_offset + batch.length - 1} de ${accounts.length} conta(s) — sequencial com delay`);
 
-  const results = await Promise.all(
-    batch.map((account) =>
-      processAccount({ store, account, media_url, media_type, post_type, captions, default_caption, skip_rate_limit })
-    )
-  );
+  // Publica sequencialmente com delay aleatório entre contas (anti-shadowban).
+  // Evita que o Instagram detecte padrão de publicação em massa simultânea.
+  const DELAY_MIN_MS = parseInt(process.env.INTER_ACCOUNT_DELAY_MIN || "8000");   // 8s padrão
+  const DELAY_MAX_MS = parseInt(process.env.INTER_ACCOUNT_DELAY_MAX || "20000");  // 20s padrão
+
+  const results = [];
+  for (let i = 0; i < batch.length; i++) {
+    if (i > 0) {
+      const delay = DELAY_MIN_MS + Math.floor(Math.random() * (DELAY_MAX_MS - DELAY_MIN_MS));
+      console.log(`[publish] aguardando ${Math.round(delay / 1000)}s antes da próxima conta...`);
+      await sleep(delay);
+    }
+    const result = await processAccount({
+      store, account: batch[i], media_url, media_type,
+      post_type, captions, default_caption, skip_rate_limit,
+    });
+    results.push(result);
+    console.log(`[publish] @${batch[i].username}: ${result.success ? "✅ ok" : result.rate_limited ? "⏳ rate limited" : `❌ ${result.error}`}`);
+  }
 
   return {
     statusCode: 200,

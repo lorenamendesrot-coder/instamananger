@@ -341,7 +341,9 @@ export default async function handler(request) {
   // Reseta itens "running" travados por mais de 8 minutos.
   // Aumentado de 3 → 8 min: com 50 contas, callPublishAllBatches faz até
   // 10 chamadas HTTP sequenciais (~2-3s cada) e pode levar até 7 min legítimos.
-  const STUCK_MS   = 8 * 60 * 1000;
+  // 15min: com delay sequencial entre contas (8-20s) + 10 contas + polling de vídeo,
+  // um item legítimo pode levar até ~5min. 15min dá margem ampla antes de resetar.
+  const STUCK_MS   = 15 * 60 * 1000;
   const stuckItems = queue.filter(
     (x) => x.status === "running" && x.startedAt && now - new Date(x.startedAt).getTime() > STUCK_MS
   );
