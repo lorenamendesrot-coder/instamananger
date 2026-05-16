@@ -61,6 +61,19 @@ export default function Warmup() {
   const [syncingNames, setSyncingNames] = useState(false);
   const [syncResult,   setSyncResult]   = useState(null); // { updated: n, total: n }
 
+  // ─── Config de agendamento Drive ─────────────────────────────────────────────
+  const nowLocalStr = () => {
+    const d = new Date(Date.now() + 15 * 60 * 1000);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const [driveStartTime,  setDriveStartTime]  = useState(nowLocalStr);
+  const [drivePostType,   setDrivePostType]   = useState("REEL");
+  const [driveGapMinutes, setDriveGapMinutes] = useState(60);
+  const [driveJitterMin,  setDriveJitterMin]  = useState(10);
+  const [driveCaption,    setDriveCaption]    = useState("");
+  const [driveLoop,       setDriveLoop]       = useState(false);
+
   // Contas que passam no filtro de dias
   const eligibleAccounts = useMemo(
     () => accounts.filter((a) => !useNewOnly || isNewAccount(a)),
@@ -737,6 +750,78 @@ export default function Warmup() {
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* ── Configuração de Agendamento via Drive ── */}
+          <div className="card">
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 14 }}>
+              <svg width="14" height="14" viewBox="0 0 48 48" style={{ display:"inline",verticalAlign:"middle",marginRight:6 }}>
+                <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.8 2.2 30.3 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.8 6C12.2 13 17.7 9.5 24 9.5z"/>
+                <path fill="#4285F4" d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4 6.9-10 6.9-17z"/>
+                <path fill="#FBBC05" d="M10.4 28.7A14.6 14.6 0 0 1 9.5 24c0-1.6.3-3.2.9-4.7L2.6 13.3A23.9 23.9 0 0 0 0 24c0 3.8.9 7.4 2.6 10.6l7.8-5.9z"/>
+                <path fill="#34A853" d="M24 48c6.3 0 11.6-2.1 15.5-5.6l-7.5-5.8c-2.1 1.4-4.8 2.3-8 2.3-6.3 0-11.7-4.2-13.6-10l-7.8 6C6.6 42.6 14.6 48 24 48z"/>
+              </svg>
+              Configuração de Agendamento (Drive)
+            </div>
+            <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10 }}>
+              <div>
+                <div style={{ fontSize:11,color:"var(--muted)",marginBottom:4 }}>
+                  Início <span style={{ color:"var(--accent-light)",fontWeight:600 }}>(horário de Brasília)</span>
+                </div>
+                <input type="datetime-local" value={driveStartTime} onChange={e=>setDriveStartTime(e.target.value)}
+                  style={{ background:"var(--bg3)",color:"var(--fg)",border:"1px solid var(--border)",borderRadius:7,padding:"6px 10px",fontSize:13,width:"100%" }} />
+                <div style={{ fontSize:10,color:"var(--muted)",marginTop:3 }}>🇧🇷 BRT (UTC-3) — padrão: agora + 15 min</div>
+              </div>
+              <div>
+                <div style={{ fontSize:11,color:"var(--muted)",marginBottom:4 }}>Tipo de post</div>
+                <select value={drivePostType} onChange={e=>setDrivePostType(e.target.value)}
+                  style={{ background:"var(--bg3)",color:"var(--fg)",border:"1px solid var(--border)",borderRadius:7,padding:"6px 10px",fontSize:13,width:"100%" }}>
+                  <option value="REEL">Reel</option>
+                  <option value="FEED">Feed (vídeo)</option>
+                  <option value="STORY">Story</option>
+                </select>
+              </div>
+              <div>
+                <div style={{ fontSize:11,color:"var(--muted)",marginBottom:4 }}>Intervalo entre posts</div>
+                <select value={driveGapMinutes} onChange={e=>setDriveGapMinutes(Number(e.target.value))}
+                  style={{ background:"var(--bg3)",color:"var(--fg)",border:"1px solid var(--border)",borderRadius:7,padding:"6px 10px",fontSize:13,width:"100%" }}>
+                  <option value={10}>10 min</option>
+                  <option value={30}>30 min</option>
+                  <option value={60}>1 hora</option>
+                  <option value={120}>2 horas</option>
+                  <option value={360}>6 horas</option>
+                  <option value={720}>12 horas</option>
+                  <option value={1440}>1 dia</option>
+                </select>
+              </div>
+              <div>
+                <div style={{ fontSize:11,color:"var(--muted)",marginBottom:4 }}>Variação (jitter)</div>
+                <select value={driveJitterMin} onChange={e=>setDriveJitterMin(Number(e.target.value))}
+                  style={{ background:"var(--bg3)",color:"var(--fg)",border:"1px solid var(--border)",borderRadius:7,padding:"6px 10px",fontSize:13,width:"100%" }}>
+                  <option value={0}>Sem variação</option>
+                  <option value={5}>± 5 min</option>
+                  <option value={10}>± 10 min</option>
+                  <option value={15}>± 15 min</option>
+                  <option value={20}>± 20 min</option>
+                  <option value={30}>± 30 min</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ marginTop:10 }}>
+              <div style={{ fontSize:11,color:"var(--muted)",marginBottom:4 }}>Legenda (opcional)</div>
+              <textarea value={driveCaption} onChange={e=>setDriveCaption(e.target.value)}
+                placeholder="Escreva a legenda dos posts do Drive..."
+                rows={2}
+                style={{ background:"var(--bg3)",color:"var(--fg)",border:"1px solid var(--border)",borderRadius:7,padding:"6px 10px",fontSize:13,width:"100%",resize:"vertical",fontFamily:"inherit" }} />
+            </div>
+            <div style={{ marginTop:10,display:"flex",alignItems:"center",gap:10 }}>
+              <label style={{ display:"flex",alignItems:"center",gap:7,cursor:"pointer",userSelect:"none",fontSize:12,color:driveLoop?"var(--accent-light)":"var(--muted)" }}>
+                <div onClick={()=>setDriveLoop(v=>!v)} style={{ width:36,height:20,borderRadius:10,position:"relative",background:driveLoop?"var(--accent)":"var(--bg3)",border:`1px solid ${driveLoop?"var(--accent)":"var(--border)"}`,transition:"all 0.2s",cursor:"pointer",flexShrink:0 }}>
+                  <div style={{ position:"absolute",top:2,left:driveLoop?17:2,width:14,height:14,borderRadius:"50%",background:"#fff",transition:"left 0.2s" }} />
+                </div>
+                🔁 Loop diário
+              </label>
             </div>
           </div>
 
