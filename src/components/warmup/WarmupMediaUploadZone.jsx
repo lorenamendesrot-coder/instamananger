@@ -1,6 +1,7 @@
 // WarmupMediaUploadZone.jsx — mídias por URL ou Google Drive
 import { useState, useCallback } from "react";
 import DrivePicker from "../DrivePicker.jsx";
+import { useDriveAuth } from "../../useDriveAuth.js";
 
 const MEDIA_ACCEPT = "video/*,image/*";
 const MEDIA_EXTS   = /\.(mp4|mov|avi|mkv|webm|m4v|jpg|jpeg|png|webp|gif|heic|heif)$/i;
@@ -40,6 +41,9 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
   const [showDrive, setShowDrive]     = useState(false);
   const [dragging, setDragging]       = useState(false);
   const [uploading, setUploading]     = useState({}); // fileId → progress
+  const [driveImporting, setDriveImporting] = useState(false); // importando do Drive via proxy
+  const [driveImportError, setDriveImportError] = useState(null);
+  const drive = useDriveAuth();
 
   const myFiles = files[typeConfig.id] || [];
   const done    = myFiles.filter((f) => f.status === "done");
@@ -158,26 +162,53 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
                 pickerMode
                 accounts={[]}
                 onClose={() => setShowDrive(false)}
-                onPick={(pickedVideos) => {
-                  // Converte vídeos do Drive em entradas com driveFileId para o UploadZone
-                  const entries = pickedVideos.map((v) => ({
-                    id: `drive-${v.id}-${Date.now()}-${Math.random()}`,
-                    name: v.name,
-                    status: "done",
-                    url: v.webContentLink || v.webViewLink || `drive://${v.id}`,
-                    driveFileId: v.id,
-                    driveName: v.name,
-                    size: v.size || 0,
-                    progress: 100,
-                    source: "google_drive",
-                  }));
-                  if (entries.length) onAddFiles(typeConfig.id, entries);
+                onPick={async (pickedVideos) => {
                   setShowDrive(false);
+                  setDriveImporting(true);
+                  setDriveImportError(null);
+                  try {
+                    const { refresh_token } = drive.tokenData || {};
+                    if (!refresh_token) throw new Error("Sessão do Drive sem refresh_token. Desconecte e reconecte.");
+
+                    const urls = [];
+                    for (const v of pickedVideos) {
+                      const res  = await fetch("/api/drive-proxy", {
+                        method:  "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body:    JSON.stringify({ file_id: v.id, file_name: v.name, refresh_token }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok) throw new Error(data.error || `Erro ao importar "${v.name}"`);
+                      urls.push(data.url);
+                    }
+                    if (urls.length) onAddUrl(typeConfig.id, urls);
+                  } catch (err) {
+                    setDriveImportError(err.message);
+                  } finally {
+                    setDriveImporting(false);
+                  }
                 }}
                 onSchedule={() => {}}
               />
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Status de importação do Drive */}
+      {driveImporting && (
+        <div style={{ marginBottom: 8, padding: "10px 14px", borderRadius: 9, background: "rgba(124,92,252,0.07)", border: "1px solid rgba(124,92,252,0.25)", display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="spinner" style={{ width: 14, height: 14, borderTopColor: "var(--accent)", display: "inline-block", flexShrink: 0 }} />
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent-light)" }}>Importando do Google Drive...</div>
+            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>Baixando e gerando URLs públicas via proxy. Aguarde.</div>
+          </div>
+        </div>
+      )}
+      {driveImportError && (
+        <div style={{ marginBottom: 8, padding: "10px 14px", borderRadius: 9, background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.25)", fontSize: 12, color: "var(--danger)", display: "flex", alignItems: "center", gap: 8 }}>
+          <span>⚠️ {driveImportError}</span>
+          <button style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 14 }} onClick={() => setDriveImportError(null)}>✕</button>
         </div>
       )}
 
