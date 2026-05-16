@@ -157,18 +157,41 @@ async function processVideoFinish(store, vf) {
     if (result?.success) {
       console.log(`[scheduler] ✅ video_finish @${vf.username} publicado`);
       await queueUpdate(store, { ...vf, status: "done", result, finishedAt: new Date().toISOString() });
+
+      // Acumula resultado no item pai para o histórico ficar correto
+      await pushResultToParent(store, vf.historyId, {
+        account_id:   vf.account_id,
+        username:     vf.username,
+        success:      true,
+        media_id:     result.media_id,
+        published_at: result.published_at,
+      });
       return;
     }
 
     if (result && !result.success) {
       console.error(`[scheduler] ❌ video_finish @${vf.username}: ${result.error}`);
       await queueUpdate(store, { ...vf, status: "error", error: result.error });
+
+      // Acumula falha no item pai também
+      await pushResultToParent(store, vf.historyId, {
+        account_id: vf.account_id,
+        username:   vf.username,
+        success:    false,
+        error:      result.error,
+      });
       return;
     }
 
     const attempts = (vf.attempts || 0) + 1;
     if (attempts >= (vf.maxAttempts || 20)) {
       await queueUpdate(store, { ...vf, status: "error", error: "Timeout: vídeo não processou após múltiplas tentativas" });
+      await pushResultToParent(store, vf.historyId, {
+        account_id: vf.account_id,
+        username:   vf.username,
+        success:    false,
+        error:      "Timeout: vídeo não processou",
+      });
     } else {
       console.log(`[scheduler] video_finish @${vf.username} IN_PROGRESS (tentativa ${attempts})`);
       await queueUpdate(store, { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
@@ -177,9 +200,57 @@ async function processVideoFinish(store, vf) {
     const attempts = (vf.attempts || 0) + 1;
     if (attempts >= (vf.maxAttempts || 20)) {
       await queueUpdate(store, { ...vf, status: "error", error: err.message });
+      await pushResultToParent(store, vf.historyId, {
+        account_id: vf.account_id,
+        username:   vf.username,
+        success:    false,
+        error:      err.message,
+      });
     } else {
       await queueUpdate(store, { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
     }
+  }
+}
+
+// Acumula resultado de um video_finish no array results[] do item pai.
+// Quando o último video_finish termina, marca o pai como "done".
+async function pushResultToParent(store, historyId, result) {
+  if (!historyId) return;
+  try {
+    await withLock(store, (queue) => {
+      const parent = queue.find((x) => !x.type && x.historyId === historyId);
+      if (!parent) return queue;
+
+      const existing = (parent.results || []).filter((r) => r.account_id !== result.account_id);
+      const newResults = [...existing, result];
+
+      // Verifica se ainda há video_finish pendentes/running para este historyId
+      const pendingVF = queue.filter(
+        (x) => x.type === "video_finish" &&
+               x.historyId === historyId &&
+               (x.status === "pending" || x.status === "running") &&
+               x.account_id !== result.account_id // este acabou de terminar
+      );
+
+      const allDone = pendingVF.length === 0;
+      const updated = {
+        ...parent,
+        results:     newResults,
+        ...(allDone && !parent.loop ? {
+          status:      "done",
+          completedAt: new Date().toISOString(),
+          finishedAt:  new Date().toISOString(),
+        } : {}),
+      };
+
+      if (allDone && !parent.loop) {
+        console.log(`[scheduler] ✅ item pai ${parent.id} concluído — ${newResults.filter(r => r.success).length}/${newResults.length} conta(s) publicadas`);
+      }
+
+      return queue.map((x) => x.id === parent.id ? updated : x);
+    });
+  } catch (err) {
+    console.warn(`[scheduler] pushResultToParent falhou para historyId=${historyId}:`, err.message);
   }
 }
 
@@ -226,6 +297,11 @@ async function processItem(store, item) {
           attempts:    0,
           maxAttempts: 20,
         });
+      }
+
+      // Salva historyId no item pai para que pushResultToParent consiga encontrá-lo
+      if (pendingVideos.length > 0) {
+        await queueUpdate(store, { ...item, historyId, status: "running" });
       }
 
       // ── Reagenda contas que falharam (1 chance de retry por item) ─────────
@@ -276,19 +352,29 @@ async function processItem(store, item) {
     }
 
     // ── Finaliza item original ────────────────────────────────────────────
+    // Verifica se ainda tem video_finish pendentes para este item
+    const allQueue       = await queueReadAll(store);
+    const pendingFinish  = allQueue.filter(
+      (x) => x.type === "video_finish" && x.status === "pending" && x.historyId && item.historyId && x.historyId === item.historyId
+    );
+    const stillPending   = pendingFinish.length > 0;
+
     if (item.loop) {
-      // Intervalo: 1h + jitter aleatório de ±3 min para evitar shadowban
-      // (padrão fixo de horário é detectado pelo algoritmo do Instagram)
-      const HOUR_MS  = 3600 * 1000;
-      const JITTER   = Math.floor(Math.random() * 360 - 180) * 1000; // ±3 min em ms
+      const HOUR_MS = 3600 * 1000;
+      const JITTER  = Math.floor(Math.random() * 360 - 180) * 1000;
       await queueUpdate(store, {
         ...item,
         status:      "pending",
         scheduledAt: item.scheduledAt + HOUR_MS + JITTER,
         runCount:    (item.runCount || 0) + 1,
       });
+    } else if (stillPending) {
+      // Tem video_finish ainda rodando — fica como "running" até pushResultToParent
+      // acumular todos os resultados. O App.jsx vai sincronizar o histórico depois.
+      console.log(`[scheduler] item ${item.id} — aguardando ${pendingFinish.length} video_finish(es)`);
+      // Não altera o status — permanece "running" até o último video_finish terminar
     } else {
-      // Salva results e completedAt para que o browser sincronize o histórico local
+      // Nenhum video_finish pendente — todos os resultados já foram acumulados
       await queueUpdate(store, {
         ...item,
         status:      "done",
