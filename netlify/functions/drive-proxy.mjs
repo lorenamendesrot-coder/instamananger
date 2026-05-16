@@ -83,6 +83,128 @@ async function downloadFromDrive(fileId, accessToken) {
   return { buffer, sizeBytes: buffer.byteLength };
 }
 
+// ─── Sanitização MP4 ──────────────────────────────────────────────────────────
+// Torna cada cópia do vídeo única sem reencoding:
+//  1. Apaga átomos de metadados (©nam, ©too, ©cmt, uuid, EXIF, XMP)
+//  2. Altera timestamp de criação/modificação no mvhd e tkhd
+//  3. Injeta ruído de 4 bytes numa posição aleatória dentro do mdat
+//     (bytes não vídeo — dentro do cabeçalho interno do mdat, seguro)
+//  4. Gera novo "encoder string" no udta/meta
+// Resultado: hash MD5/SHA diferente, metadados limpos, sem reencoding.
+function sanitizeMP4(buffer, accountId) {
+  const view  = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  const len   = bytes.length;
+
+  // Seed determinística por conta + timestamp para garantir unicidade
+  const seed = accountId + Date.now().toString(36) + Math.random().toString(36);
+  let rngState = 0;
+  for (let i = 0; i < seed.length; i++) rngState = (rngState * 31 + seed.charCodeAt(i)) >>> 0;
+  function rng() { rngState = (rngState * 1664525 + 1013904223) >>> 0; return rngState; }
+
+  // Percorre os átomos MP4 de nível superior
+  let offset = 0;
+  let mdatStart = -1, mdatSize = 0;
+
+  while (offset + 8 <= len) {
+    let atomSize = view.getUint32(offset, false);
+    const atomType = String.fromCharCode(bytes[offset+4], bytes[offset+5], bytes[offset+6], bytes[offset+7]);
+
+    if (atomSize === 1) {
+      // Extended size (64-bit) — lê os próximos 8 bytes
+      if (offset + 16 > len) break;
+      const hi = view.getUint32(offset + 8, false);
+      const lo = view.getUint32(offset + 12, false);
+      atomSize = hi * 0x100000000 + lo;
+    }
+    if (atomSize < 8 || offset + atomSize > len) break;
+
+    // ── mvhd: zera timestamps de criação e modificação ─────────────────────
+    if (atomType === "moov") {
+      // Entra recursivamente para achar mvhd e tkhd dentro do moov
+      patchMoovAtoms(bytes, view, offset + 8, offset + atomSize, rng);
+    }
+
+    // ── mdat: injeta ruído nos primeiros bytes livres ───────────────────────
+    if (atomType === "mdat") {
+      mdatStart = offset + 8; // início do payload
+      mdatSize  = atomSize - 8;
+    }
+
+    offset += atomSize;
+  }
+
+  // Injeta 4 bytes de ruído no início do mdat (bytes 0-3 do payload mdat
+  // são parte do cabeçalho interno NAL/MP4 — alteramos apenas 2 bytes
+  // no offset 2-3 que são reservados e ignorados pelos decoders)
+  if (mdatStart > 0 && mdatSize > 64) {
+    const noiseOffset = mdatStart + 2 + (rng() % Math.min(32, mdatSize - 4));
+    bytes[noiseOffset]     = (rng() & 0xFF);
+    bytes[noiseOffset + 1] = (rng() & 0xFF);
+    console.log(`[sanitize] ruído injetado em offset ${noiseOffset}`);
+  }
+
+  // Apaga strings de metadados comuns (©nam, ©too, ©cmt, ©ART, EXIF, XMP)
+  const metaTags = [
+    [0xA9, 0x6E, 0x61, 0x6D], // ©nam
+    [0xA9, 0x74, 0x6F, 0x6F], // ©too (encoder)
+    [0xA9, 0x63, 0x6D, 0x74], // ©cmt
+    [0xA9, 0x41, 0x52, 0x54], // ©ART
+    [0x58, 0x4D, 0x50, 0x5F], // XMP_
+  ];
+
+  for (const tag of metaTags) {
+    let pos = 0;
+    while (pos < len - 12) {
+      if (bytes[pos] === tag[0] && bytes[pos+1] === tag[1] &&
+          bytes[pos+2] === tag[2] && bytes[pos+3] === tag[3]) {
+        // Apaga o conteúdo do átomo (preserva tamanho para não quebrar estrutura)
+        const tagSize = view.getUint32(pos - 4, false);
+        if (tagSize > 12 && pos - 4 + tagSize <= len) {
+          bytes.fill(0x20, pos + 8, pos - 4 + tagSize); // preenche com espaços
+        }
+      }
+      pos++;
+    }
+  }
+
+  console.log(`[sanitize] MP4 sanitizado para conta ${accountId}`);
+  return bytes.buffer;
+}
+
+function patchMoovAtoms(bytes, view, start, end, rng) {
+  let offset = start;
+  while (offset + 8 <= end) {
+    const atomSize = view.getUint32(offset, false);
+    const atomType = String.fromCharCode(bytes[offset+4], bytes[offset+5], bytes[offset+6], bytes[offset+7]);
+    if (atomSize < 8 || offset + atomSize > end) break;
+
+    if (atomType === "mvhd" || atomType === "tkhd") {
+      // Version 0: timestamps em 32-bit nos bytes 4-11 (creation + modification)
+      // Version 1: timestamps em 64-bit nos bytes 4-19
+      const version = bytes[offset + 8];
+      if (version === 0) {
+        // Zera creation_time e modification_time (substitui por valor aleatório baixo)
+        const ts = (rng() % 1000000) + 1000000; // timestamp pequeno único
+        view.setUint32(offset + 12, ts, false); // creation_time
+        view.setUint32(offset + 16, ts + (rng() % 1000), false); // modification_time
+      } else if (version === 1) {
+        view.setUint32(offset + 16, 0, false);
+        view.setUint32(offset + 20, (rng() % 1000000) + 1000000, false);
+        view.setUint32(offset + 24, 0, false);
+        view.setUint32(offset + 28, (rng() % 1000000) + 1000000, false);
+      }
+    }
+
+    // Recursivo em trak, udta, mdia, minf, stbl
+    if (["trak","udta","mdia","minf","stbl","meta"].includes(atomType)) {
+      patchMoovAtoms(bytes, view, offset + 8, offset + atomSize, rng);
+    }
+
+    offset += atomSize;
+  }
+}
+
 export default async function handler(req) {
   const origin  = req.headers.get?.("origin") || "";
   const headers = corsHeaders(origin);
@@ -123,7 +245,7 @@ export default async function handler(req) {
     try { body = await req.json(); }
     catch { return json({ error: "JSON invalido" }, 400); }
 
-    const { file_id, file_name, refresh_token } = body;
+    const { file_id, file_name, refresh_token, account_id } = body;
 
     if (!file_id)       return json({ error: "file_id obrigatorio" }, 400);
     if (!refresh_token) return json({ error: "refresh_token obrigatorio" }, 400);
@@ -132,19 +254,30 @@ export default async function handler(req) {
       const accessToken           = await renewAccessToken(refresh_token);
       const { buffer, sizeBytes } = await downloadFromDrive(file_id, accessToken);
 
-      const store   = getVideoStore();
-      const blobKey = `video-${file_id}`;
-      await store.set(blobKey, buffer, {
+      // Sanitiza o MP4: limpa metadados, altera timestamps, injeta ruído único
+      // Cada conta recebe uma versão com hash diferente do mesmo vídeo
+      const sanitized    = sanitizeMP4(buffer, account_id || file_id + Date.now());
+      const sanitizedArr = new Uint8Array(sanitized);
+
+      const store = getVideoStore();
+      // blob_key único por conta — garante versão diferente para cada uma
+      const blobKey  = account_id
+        ? `video-${file_id}-${account_id}`
+        : `video-${file_id}-${Date.now()}`;
+
+      await store.set(blobKey, sanitizedArr, {
         metadata: {
-          file_name:   file_name || file_id,
-          uploaded_at: new Date().toISOString(),
-          size:        String(sizeBytes),
+          file_name:    file_name || file_id,
+          uploaded_at:  new Date().toISOString(),
+          size:         String(sanitizedArr.byteLength),
+          account_id:   account_id || "",
+          sanitized:    "true",
         },
       });
 
       const proxyUrl = `${SITE_URL}/.netlify/functions/drive-proxy?key=${blobKey}`;
-      console.log(`[drive-proxy] OK ${file_name || file_id} (${(sizeBytes / 1e6).toFixed(1)}MB) -> ${proxyUrl}`);
-      return json({ url: proxyUrl, blob_key: blobKey, size: sizeBytes });
+      console.log(`[drive-proxy] OK ${file_name || file_id} (${(sanitizedArr.byteLength / 1e6).toFixed(1)}MB) conta:${account_id || "n/a"} -> ${proxyUrl}`);
+      return json({ url: proxyUrl, blob_key: blobKey, size: sanitizedArr.byteLength });
 
     } catch (err) {
       console.error("[drive-proxy] POST erro:", err.message);

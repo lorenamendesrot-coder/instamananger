@@ -251,6 +251,7 @@ async function processPerAccount(store, item) {
           file_id:       item.driveFileId,
           file_name:     item.driveName || item.driveFileId,
           refresh_token: item.driveRefreshToken,
+          account_id:    item.accounts?.[0]?.id || item.account_id || null,
         }),
       });
       const proxyData = await proxyRes.json();
