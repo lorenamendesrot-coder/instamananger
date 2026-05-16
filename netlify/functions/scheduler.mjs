@@ -289,6 +289,7 @@ async function processItem(store, item) {
           accounts:    item.accounts,
           scheduledAt: Date.now() + 30000,
           historyId,
+          parentId:    item.id,
           mediaUrl,
           postType:    item.postType,
           mediaType:   item.mediaType,

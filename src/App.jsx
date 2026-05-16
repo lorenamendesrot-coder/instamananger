@@ -292,6 +292,7 @@ function SchedulerProvider({ addEntry, children }) {
                 id: `vf-${historyId}-${pr.account_id}`, type: "video_finish", status: "pending",
                 creation_id: pr.creation_id, account_id: pr.account_id, username: pr.username || pr.account_id,
                 accounts: item.accounts, scheduledAt: Date.now() + 30000, historyId,
+                parentId: item.id,
                 mediaUrl, postType: item.postType, mediaType: item.mediaType, caption: item.caption || "",
                 createdAt: new Date().toISOString(), attempts: 0, maxAttempts: 20,
               });

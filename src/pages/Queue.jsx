@@ -109,14 +109,19 @@ export default function Queue() {
   const mainQueue   = useMemo(() => queue.filter((q) => !q.type), [queue]);
   const videoFinish = useMemo(() => queue.filter((q) => q.type === "video_finish"), [queue]);
 
-  // Mapa historyId → video_finish items
+  // Mapa itemId → video_finish items
+  // video_finish pode ter historyId (formato "h-xxx") ou parentId (item.id direto)
+  // O QueueItem busca por item.id, então mapeamos pelos dois
   const vfByParent = useMemo(() => {
     const map = {};
     for (const vf of videoFinish) {
-      const key = vf.historyId || vf.parentId;
-      if (!key) continue;
-      if (!map[key]) map[key] = [];
-      map[key].push(vf);
+      // tenta parentId primeiro, depois historyId
+      const keys = [vf.parentId, vf.historyId].filter(Boolean);
+      for (const key of keys) {
+        if (!map[key]) map[key] = [];
+        // evita duplicatas
+        if (!map[key].find(x => x.id === vf.id)) map[key].push(vf);
+      }
     }
     return map;
   }, [videoFinish]);
