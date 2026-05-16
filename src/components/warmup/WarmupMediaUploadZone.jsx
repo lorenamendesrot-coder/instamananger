@@ -1,5 +1,6 @@
-// WarmupMediaUploadZone.jsx — mídias por arquivo, pasta ou URL
-import { useState, useRef, useCallback } from "react";
+// WarmupMediaUploadZone.jsx — mídias por URL ou Google Drive
+import { useState, useCallback } from "react";
+import DrivePicker from "../DrivePicker.jsx";
 
 const MEDIA_ACCEPT = "video/*,image/*";
 const MEDIA_EXTS   = /\.(mp4|mov|avi|mkv|webm|m4v|jpg|jpeg|png|webp|gif|heic|heif)$/i;
@@ -36,10 +37,9 @@ async function uploadToCatbox(file, onProgress) {
 
 export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onRemoveAll, urlInput, onUrlInputChange, onAddUrl, onUpdateFile }) {
   const [showBulkUrl, setShowBulkUrl] = useState(false);
+  const [showDrive, setShowDrive]     = useState(false);
   const [dragging, setDragging]       = useState(false);
   const [uploading, setUploading]     = useState({}); // fileId → progress
-  const fileInputRef   = useRef(null);
-  const folderInputRef = useRef(null);
 
   const myFiles = files[typeConfig.id] || [];
   const done    = myFiles.filter((f) => f.status === "done");
@@ -58,37 +58,6 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
     const mediaOnly = Array.from(rawFiles).filter(isMediaFile);
     if (!mediaOnly.length) return;
     onAddFiles(typeConfig.id, mediaOnly);
-  };
-
-  const handleFileInput = (e) => {
-    handleFilesSelected(e.target.files);
-    e.target.value = "";
-  };
-
-  const handleFolderPick = async () => {
-    if (window.showDirectoryPicker) {
-      try {
-        const dirHandle = await window.showDirectoryPicker({ mode: "read" });
-        const collected = [];
-        async function walk(handle) {
-          for await (const [, entry] of handle.entries()) {
-            if (entry.kind === "file") {
-              const f = await entry.getFile();
-              if (isMediaFile(f)) collected.push(f);
-            } else if (entry.kind === "directory") {
-              await walk(entry);
-            }
-          }
-        }
-        await walk(dirHandle);
-        if (collected.length) onAddFiles(typeConfig.id, collected);
-        else alert("Nenhuma mídia encontrada na pasta selecionada.");
-      } catch (err) {
-        if (err.name !== "AbortError") console.error(err);
-      }
-    } else {
-      folderInputRef.current?.click();
-    }
   };
 
   const uploadAll = useCallback(async () => {
@@ -116,8 +85,6 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
 
   return (
     <div style={{ marginBottom: 4 }}>
-      <input ref={fileInputRef} type="file" accept={MEDIA_ACCEPT} multiple style={{ display: "none" }} onChange={handleFileInput} />
-      <input ref={folderInputRef} type="file" accept={MEDIA_ACCEPT} multiple webkitdirectory="true" style={{ display: "none" }} onChange={handleFileInput} />
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -141,21 +108,53 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
 
       {/* Botões de seleção */}
       <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
-        <button className="btn btn-ghost btn-sm" style={{ flex: "1 1 auto" }} onClick={() => fileInputRef.current?.click()}>
-          📁 Arquivos
-        </button>
-        <button className="btn btn-ghost btn-sm" style={{ flex: "1 1 auto" }} onClick={handleFolderPick}>
-          📂 Pasta
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ flex: "1 1 auto", color: showDrive ? "var(--accent-light)" : undefined }}
+          onClick={() => { setShowDrive((p) => !p); setShowBulkUrl(false); }}
+          title="Selecionar do Google Drive"
+        >
+          <svg width="13" height="13" viewBox="0 0 48 48" style={{ display: "inline", verticalAlign: "middle", marginRight: 5 }}>
+            <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.8 2.2 30.3 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.8 6C12.2 13 17.7 9.5 24 9.5z"/>
+            <path fill="#4285F4" d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4 6.9-10 6.9-17z"/>
+            <path fill="#FBBC05" d="M10.4 28.7A14.6 14.6 0 0 1 9.5 24c0-1.6.3-3.2.9-4.7L2.6 13.3A23.9 23.9 0 0 0 0 24c0 3.8.9 7.4 2.6 10.6l7.8-5.9z"/>
+            <path fill="#34A853" d="M24 48c6.3 0 11.6-2.1 15.5-5.6l-7.5-5.8c-2.1 1.4-4.8 2.3-8 2.3-6.3 0-11.7-4.2-13.6-10l-7.8 6C6.6 42.6 14.6 48 24 48z"/>
+          </svg>
+          Google Drive
         </button>
         <button
           className="btn btn-ghost btn-sm"
           style={{ flex: "0 0 auto", color: showBulkUrl ? "var(--accent-light)" : undefined }}
-          onClick={() => setShowBulkUrl((p) => !p)}
+          onClick={() => { setShowBulkUrl((p) => !p); setShowDrive(false); }}
           title="Adicionar por URL pública"
         >
           🔗 URL
         </button>
       </div>
+
+      {/* Google Drive inline picker */}
+      {showDrive && (
+        <div style={{
+          marginBottom: 8, borderRadius: 10,
+          border: "1px solid var(--border2)",
+          background: "var(--bg2)",
+          overflow: "hidden",
+          maxHeight: 480,
+          overflowY: "auto",
+        }}>
+          <DrivePicker
+            inline
+            accounts={[]}
+            onClose={() => setShowDrive(false)}
+            onSchedule={(items) => {
+              // Converte itens do Drive em entradas de URL para o UploadZone
+              const urls = items.map((item) => item.url || item.webContentLink).filter(Boolean);
+              if (urls.length) onAddUrl(typeConfig.id, urls);
+              setShowDrive(false);
+            }}
+          />
+        </div>
+      )}
 
       {/* Campo URL */}
       {showBulkUrl && (
@@ -189,11 +188,11 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
           onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => { e.preventDefault(); setDragging(false); handleFilesSelected(e.dataTransfer.files); }}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => setShowDrive(true)}
         >
           <div style={{ fontSize: 24, marginBottom: 4 }}>⬆</div>
-          Arraste mídias aqui ou clique para selecionar<br />
-          <span style={{ fontSize: 10, opacity: 0.65 }}>Aceita vídeos e imagens • MP4, MOV, JPG, PNG...</span>
+          Arraste mídias aqui ou clique para abrir o Drive<br />
+          <span style={{ fontSize: 10, opacity: 0.65 }}>Ou use os botões acima para Drive / URL</span>
         </div>
       )}
 
