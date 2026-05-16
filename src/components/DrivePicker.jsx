@@ -17,11 +17,9 @@ function fmtDuration(sec) {
   return `${m}:${String(s).padStart(2,"0")}`;
 }
 
-// Retorna "YYYY-MM-DDTHH:MM" no horario LOCAL do navegador, arredondado para proximos 15 min
-function nowLocal(offsetMinutes = 15) {
-  const withOffset = Date.now() + offsetMinutes * 60 * 1000;
-  const rounded = Math.ceil(withOffset / (15 * 60 * 1000)) * (15 * 60 * 1000);
-  const d = new Date(rounded);
+// Retorna "YYYY-MM-DDTHH:MM" no horario LOCAL do navegador + 60 segundos
+function nowLocal(offsetMinutes = 0) {
+  const d = new Date(Date.now() + 60 * 1000);
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
