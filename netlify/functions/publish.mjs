@@ -26,7 +26,10 @@ function resolveGoogleDriveUrl(url) {
     return url;
   }
 
-  const direct = `https://drive.google.com/uc?export=download&id=${fileId}`;
+  // "confirm=t" bypassa a tela de confirmação de antivírus do Google Drive
+  // que bloqueia downloads de arquivos grandes (vídeos) sem interação humana.
+  // Sem esse parâmetro, o Instagram recebe uma página HTML em vez do vídeo.
+  const direct = `https://drive.google.com/uc?export=download&confirm=t&id=${fileId}`;
   console.log(`[publish] Google Drive convertido: ${fileId} -> ${direct}`);
   return direct;
 }
@@ -159,7 +162,7 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
     if (cData.error) {
       let errMsg = cData.error.message;
       if (cData.error.code === 2207077 || errMsg?.includes("Media upload has failed")) {
-        errMsg = "Instagram nao conseguiu baixar o video. Verifique se o arquivo no Google Drive esta com permissao publica ('Qualquer pessoa com o link'). Se estiver usando outro host, certifique-se que a URL e publica e acessivel (catbox.moe e bloqueado pela Meta).";
+        errMsg = "Instagram não conseguiu baixar o vídeo do Google Drive. Confirme que: 1) O arquivo tem permissão 'Qualquer pessoa com o link pode ver'; 2) O link é compartilhável (não restrito). O sistema já aplica 'confirm=t' automaticamente para contornar a tela de antivírus do Drive.";
       }
       return { success: false, error: errMsg, errorCode: cData.error.code };
     }
