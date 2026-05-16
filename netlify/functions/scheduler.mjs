@@ -226,13 +226,49 @@ async function processPerAccount(store, item) {
   console.log(`[scheduler] per_account @${item.username} (${item.historyId})`);
   await queueUpdate(store, { ...item, status: "running" });
 
+  // ── Se for origem Google Drive, resolve URL fresca antes de publicar ────────
+  // O drive-proxy baixa o vídeo com refresh_token (não expira) e retorna
+  // uma URL pública do Netlify Blobs que a API da Meta consegue acessar.
+  // Isso funciona em loops: cada rodada re-baixa o vídeo do Drive.
+  let mediaUrl = item.mediaUrl;
+  if (item.driveFileId && item.driveRefreshToken) {
+    try {
+      console.log(`[scheduler] 📂 resolvendo Drive proxy para @${item.username} (${item.driveName || item.driveFileId})`);
+      const proxyRes = await fetch(`${SITE_URL}/.netlify/functions/drive-proxy`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          file_id:       item.driveFileId,
+          file_name:     item.driveName || item.driveFileId,
+          refresh_token: item.driveRefreshToken,
+        }),
+      });
+      const proxyData = await proxyRes.json();
+      if (!proxyRes.ok || !proxyData.url) {
+        throw new Error(proxyData.error || `drive-proxy HTTP ${proxyRes.status}`);
+      }
+      mediaUrl = proxyData.url;
+      console.log(`[scheduler] 📂 Drive proxy OK: ${mediaUrl}`);
+    } catch (proxyErr) {
+      console.error(`[scheduler] ❌ drive-proxy falhou para @${item.username}:`, proxyErr.message);
+      await queueUpdate(store, { ...item, status: "error", error: `Falha ao baixar vídeo do Drive: ${proxyErr.message}`, finishedAt: new Date().toISOString() });
+      await pushResultToParent(store, item.historyId, {
+        account_id: item.account_id,
+        username:   item.username,
+        success:    false,
+        error:      `Falha ao baixar vídeo do Drive: ${proxyErr.message}`,
+      });
+      return;
+    }
+  }
+
   try {
     const res = await fetch(`${SITE_URL}/.netlify/functions/publish`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         accounts:        [item.account],
-        media_url:       item.mediaUrl,
+        media_url:       mediaUrl,
         media_type:      item.mediaType,
         post_type:       item.postType,
         captions:        item.captions        || {},
@@ -378,7 +414,10 @@ async function processItem(store, item) {
         warmup:      item.warmup   || false,
         scheduledAt: now + slotIndex * ACCOUNT_GAP_MS,
         createdAt:   new Date().toISOString(),
-        failedAccountIds: item.failedAccountIds || [],
+        failedAccountIds:  item.failedAccountIds  || [],
+        driveFileId:       item.driveFileId       || null,
+        driveName:         item.driveName         || null,
+        driveRefreshToken: item.driveRefreshToken || null,
       });
       slotIndex++;
     }

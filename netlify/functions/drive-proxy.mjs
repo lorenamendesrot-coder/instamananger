@@ -1,32 +1,29 @@
 // drive-proxy.mjs
-// Baixa um vídeo do Google Drive usando o token OAuth do usuário
-// e armazena no Netlify Blobs como URL pública temporária.
+// Baixa um vídeo do Google Drive usando refresh_token (não expira)
+// e armazena no Netlify Blobs, retornando uma URL pública permanente.
 //
-// O Instagram não consegue baixar diretamente do Drive (redireciona
-// para tela de confirmação ou exige cookies). Este proxy resolve isso:
-// o Netlify autentica no Drive com o token do usuário, baixa o arquivo,
-// e serve uma URL pública que a API da Meta consegue acessar.
+// Funciona para loops: cada rodada chama o proxy, que re-baixa o vídeo
+// com um access_token renovado a partir do refresh_token salvo.
 //
 // POST /api/drive-proxy
-//   body: { file_id, file_name, access_token }
-//   retorna: { url, blob_key, size, expires_at }
+//   body: { file_id, file_name, refresh_token }
+//   retorna: { url, blob_key, size }
 //
 // GET  /api/drive-proxy?key=BLOB_KEY
-//   Serve o vídeo diretamente (usado como URL pública para a Meta)
+//   Serve o vídeo diretamente para a API da Meta
 
 import { getStore } from "@netlify/blobs";
 
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
-const SITE_URL       = process.env.URL || process.env.NETLIFY_URL || "";
-
-// Vídeos ficam disponíveis por 2 horas — suficiente para o Instagram processar
-const TTL_MS = 2 * 60 * 60 * 1000;
+const ALLOWED_ORIGIN  = process.env.ALLOWED_ORIGIN || process.env.URL || "";
+const SITE_URL        = process.env.URL || process.env.NETLIFY_URL || "";
+const CLIENT_ID       = process.env.GOOGLE_CLIENT_ID;
+const CLIENT_SECRET   = process.env.GOOGLE_CLIENT_SECRET;
 
 function corsHeaders(origin) {
   const allowed = ALLOWED_ORIGIN && origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : ALLOWED_ORIGIN || "*";
   return {
     "Access-Control-Allow-Origin":  allowed,
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type":                 "application/json",
     ...(allowed !== "*" && { Vary: "Origin" }),
   };
@@ -39,44 +36,53 @@ function getVideoStore() {
   return getStore({ name: "drive-videos", siteID, token, consistency: "strong" });
 }
 
-// ─── Baixa vídeo do Drive com OAuth ──────────────────────────────────────────
-async function downloadFromDrive(fileId, accessToken) {
-  // Tenta primeiro o endpoint de download direto via API (mais confiável que uc?export)
-  const apiUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+async function renewAccessToken(refreshToken) {
+  if (!CLIENT_ID || !CLIENT_SECRET) {
+    throw new Error("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET nao configurados no Netlify");
+  }
+  const res  = await fetch("https://oauth2.googleapis.com/token", {
+    method:  "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body:    new URLSearchParams({
+      grant_type:    "refresh_token",
+      refresh_token: refreshToken,
+      client_id:     CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) {
+    throw new Error(data.error_description || data.error || "Falha ao renovar token do Drive");
+  }
+  return data.access_token;
+}
 
-  console.log(`[drive-proxy] baixando fileId=${fileId} via Drive API`);
+async function downloadFromDrive(fileId, accessToken) {
+  const apiUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+  console.log(`[drive-proxy] baixando fileId=${fileId}`);
 
   const res = await fetch(apiUrl, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
 
   if (!res.ok) {
-    const err = await res.text().catch(() => "");
-    // 401 = token expirado
-    if (res.status === 401) throw Object.assign(new Error("token_expired"), { tokenExpired: true });
-    // 403 = sem permissão
-    if (res.status === 403) throw new Error("Sem permissão para acessar este arquivo. Verifique se o arquivo pertence à conta conectada.");
-    throw new Error(`Drive API retornou ${res.status}: ${err.slice(0, 200)}`);
+    if (res.status === 401) throw new Error("Token do Drive invalido. Reconecte o Drive no app.");
+    if (res.status === 403) throw new Error("Sem permissao para acessar este arquivo no Drive.");
+    if (res.status === 404) throw new Error("Arquivo nao encontrado no Drive. Foi deletado?");
+    throw new Error(`Drive API retornou ${res.status}`);
   }
 
-  const contentType   = res.headers.get("content-type") || "video/mp4";
-  const contentLength = res.headers.get("content-length");
-  const sizeBytes     = contentLength ? parseInt(contentLength) : null;
-
-  // Valida tamanho (Meta aceita até 1GB para Reels)
-  if (sizeBytes && sizeBytes > 1_000_000_000) {
-    throw new Error(`Arquivo muito grande: ${(sizeBytes / 1e6).toFixed(0)}MB. Máximo: 1GB.`);
+  const sizeHeader = res.headers.get("content-length");
+  const sizeBytes  = sizeHeader ? parseInt(sizeHeader) : null;
+  if (sizeBytes && sizeBytes > 1_073_741_824) {
+    throw new Error(`Arquivo muito grande: ${(sizeBytes / 1e6).toFixed(0)}MB (max 1GB)`);
   }
 
-  console.log(`[drive-proxy] baixando ${sizeBytes ? `${(sizeBytes / 1e6).toFixed(1)}MB` : "tamanho desconhecido"} (${contentType})`);
-
+  console.log(`[drive-proxy] ${sizeBytes ? (sizeBytes / 1e6).toFixed(1) + "MB" : "tamanho desconhecido"}`);
   const buffer = await res.arrayBuffer();
-  return { buffer, contentType, sizeBytes: buffer.byteLength };
+  return { buffer, sizeBytes: buffer.byteLength };
 }
 
-// ─── Handler ──────────────────────────────────────────────────────────────────
 export default async function handler(req) {
   const origin  = req.headers.get?.("origin") || "";
   const headers = corsHeaders(origin);
@@ -87,110 +93,64 @@ export default async function handler(req) {
     return new Response(JSON.stringify(data), { status, headers });
   }
 
-  // ── GET — serve vídeo pelo blob key ────────────────────────────────────────
+  // GET — serve o video para a API da Meta
   if (req.method === "GET") {
-    const url    = new URL(req.url);
-    const key    = url.searchParams.get("key");
-    if (!key) return json({ error: "key obrigatório" }, 400);
-
+    const key = new URL(req.url).searchParams.get("key");
+    if (!key) return json({ error: "key obrigatorio" }, 400);
     try {
-      const store = getVideoStore();
-      const blob  = await store.get(key, { type: "arrayBuffer" });
-      if (!blob) return new Response("Vídeo não encontrado ou expirado", { status: 404 });
-
-      // Serve o vídeo com headers corretos para a API da Meta
-      return new Response(blob, {
+      const store  = getVideoStore();
+      const buffer = await store.get(key, { type: "arrayBuffer" });
+      if (!buffer) return new Response("Video nao encontrado", { status: 404 });
+      return new Response(buffer, {
         status: 200,
         headers: {
-          "Content-Type":              "video/mp4",
-          "Content-Length":            String(blob.byteLength),
+          "Content-Type":                "video/mp4",
+          "Content-Length":              String(buffer.byteLength),
           "Access-Control-Allow-Origin": "*",
-          "Cache-Control":             "public, max-age=7200",
-          "Accept-Ranges":             "bytes",
+          "Cache-Control":               "public, max-age=86400",
+          "Accept-Ranges":               "bytes",
         },
       });
     } catch (err) {
       console.error("[drive-proxy] GET erro:", err.message);
+      return new Response("Erro ao servir video", { status: 500 });
+    }
+  }
+
+  // POST — baixa do Drive e armazena (chamado pelo DrivePicker E pelo scheduler no loop)
+  if (req.method === "POST") {
+    let body;
+    try { body = await req.json(); }
+    catch { return json({ error: "JSON invalido" }, 400); }
+
+    const { file_id, file_name, refresh_token } = body;
+
+    if (!file_id)       return json({ error: "file_id obrigatorio" }, 400);
+    if (!refresh_token) return json({ error: "refresh_token obrigatorio" }, 400);
+
+    try {
+      const accessToken           = await renewAccessToken(refresh_token);
+      const { buffer, sizeBytes } = await downloadFromDrive(file_id, accessToken);
+
+      const store   = getVideoStore();
+      const blobKey = `video-${file_id}`;
+      await store.set(blobKey, buffer, {
+        metadata: {
+          file_name:   file_name || file_id,
+          uploaded_at: new Date().toISOString(),
+          size:        String(sizeBytes),
+        },
+      });
+
+      const proxyUrl = `${SITE_URL}/.netlify/functions/drive-proxy?key=${blobKey}`;
+      console.log(`[drive-proxy] OK ${file_name || file_id} (${(sizeBytes / 1e6).toFixed(1)}MB) -> ${proxyUrl}`);
+      return json({ url: proxyUrl, blob_key: blobKey, size: sizeBytes });
+
+    } catch (err) {
+      console.error("[drive-proxy] POST erro:", err.message);
       return json({ error: err.message }, 500);
     }
   }
 
-  // ── POST — baixa do Drive e armazena ───────────────────────────────────────
-  if (req.method === "POST") {
-    let body;
-    try { body = await req.json(); }
-    catch { return json({ error: "JSON inválido" }, 400); }
-
-    const { file_id, file_name, access_token } = body;
-
-    if (!file_id)      return json({ error: "file_id obrigatório" }, 400);
-    if (!access_token) return json({ error: "access_token obrigatório — conecte o Drive" }, 400);
-
-    try {
-      const store = getVideoStore();
-
-      // Chave única por arquivo — reutiliza se já foi baixado recentemente
-      const blobKey    = `video-${file_id}`;
-      const metaKey    = `meta-${file_id}`;
-
-      // Verifica se já existe e ainda está válido (< 1h30 de vida)
-      try {
-        const existing = await store.get(metaKey, { type: "json" });
-        if (existing?.expires_at && Date.now() < existing.expires_at - 30 * 60 * 1000) {
-          console.log(`[drive-proxy] reutilizando blob existente para ${file_id}`);
-          return json({
-            url:        existing.url,
-            blob_key:   blobKey,
-            size:       existing.size,
-            expires_at: existing.expires_at,
-            cached:     true,
-          });
-        }
-      } catch {
-        // Não existe ainda — segue para baixar
-      }
-
-      // Baixa do Drive
-      const { buffer, contentType, sizeBytes } = await downloadFromDrive(file_id, access_token);
-
-      // Salva no Netlify Blobs
-      await store.set(blobKey, buffer, {
-        metadata: {
-          file_name:    file_name || file_id,
-          content_type: contentType,
-          uploaded_at:  new Date().toISOString(),
-        },
-      });
-
-      // URL pública que a API da Meta vai usar
-      const proxyUrl  = `${SITE_URL}/.netlify/functions/drive-proxy?key=${blobKey}`;
-      const expiresAt = Date.now() + TTL_MS;
-
-      // Salva metadados para reutilização
-      await store.setJSON(metaKey, {
-        url:        proxyUrl,
-        size:       sizeBytes,
-        expires_at: expiresAt,
-        file_name:  file_name || file_id,
-        uploaded_at: new Date().toISOString(),
-      });
-
-      console.log(`[drive-proxy] ✅ ${file_name} (${(sizeBytes / 1e6).toFixed(1)}MB) salvo como ${blobKey}`);
-
-      return json({
-        url:        proxyUrl,
-        blob_key:   blobKey,
-        size:       sizeBytes,
-        expires_at: expiresAt,
-        cached:     false,
-      });
-
-    } catch (err) {
-      console.error("[drive-proxy] POST erro:", err.message);
-      const status = err.tokenExpired ? 401 : 500;
-      return json({ error: err.message, token_expired: !!err.tokenExpired }, status);
-    }
-  }
-
-  return json({ error: "Método não permitido" }, 405);
+  return json({ error: "Metodo nao permitido" }, 405);
 }
