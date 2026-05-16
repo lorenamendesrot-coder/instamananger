@@ -93,7 +93,9 @@ function ExpiredScreen({ drive, onClose, inline }) {
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
-export default function DrivePicker({ accounts: allAccounts = [], onSchedule, onClose, inline = false }) {
+// pickerMode=true: só seleção de arquivos/pasta — sem painel de agendamento
+// onPick(videos): callback no modo picker
+export default function DrivePicker({ accounts: allAccounts = [], onSchedule, onPick, onClose, inline = false, pickerMode = false }) {
   const drive = useDriveAuth();
 
   const [stack,    setStack]    = useState([{ id:"root", name:"Meu Drive" }]);
@@ -102,6 +104,7 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState(null);
   const [selected, setSelected] = useState(new Set());
+  const [loadingFolder, setLoadingFolder] = useState(null); // id da pasta sendo carregada recursivamente
 
   // Configurações de agendamento
   const [postType,    setPostType]    = useState("REEL");
@@ -166,6 +169,37 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
 
   function openFolder(folder) { setStack(s=>[...s,{id:folder.id,name:folder.name}]); }
   function goBack()           { if (stack.length>1) setStack(s=>s.slice(0,-1)); }
+
+  // Seleciona todos os vídeos de uma pasta (recursivo)
+  async function selectEntireFolder(folder) {
+    setLoadingFolder(folder.id);
+    try {
+      const token = await drive.getValidToken();
+      const allVideos = [];
+      async function walk(folderId) {
+        const res  = await fetch(`/api/drive-browse?folder=${encodeURIComponent(folderId)}`, { headers: { Authorization: `Bearer ${token}` } });
+        const data = await res.json();
+        if (!res.ok) return;
+        for (const v of (data.videos || [])) allVideos.push(v);
+        for (const f of (data.folders || [])) await walk(f.id);
+      }
+      await walk(folder.id);
+      if (pickerMode && onPick && allVideos.length) {
+        onPick(allVideos);
+      } else {
+        setSelected(prev => { const n = new Set(prev); allVideos.forEach(v => n.add(v.id)); return n; });
+        // Adiciona os vídeos da pasta à lista local se não estiverem
+        setVideos(prev => {
+          const ids = new Set(prev.map(v => v.id));
+          return [...prev, ...allVideos.filter(v => !ids.has(v.id))];
+        });
+      }
+    } catch (err) {
+      setError("Erro ao carregar pasta: " + err.message);
+    } finally {
+      setLoadingFolder(null);
+    }
+  }
 
   function toggleVideo(id) { setSelected(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;}); }
   function toggleAll()     { setSelected(selected.size===videos.length?new Set():new Set(videos.map(v=>v.id))); }
@@ -264,13 +298,23 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
           {!loading && !error && (
             <>
               {folders.map(f => (
-                <div key={f.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,cursor:"pointer",fontSize:14}}
+                <div key={f.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,cursor:"pointer",fontSize:14,transition:"background 0.1s"}}
                   onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.04)"}
-                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}
-                  onClick={()=>openFolder(f)}>
-                  <IconFolder />
-                  <span style={{flex:1}}>{f.name}</span>
-                  <span style={{color:"var(--muted)",fontSize:12}}>▸</span>
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <div style={{flex:1,display:"flex",alignItems:"center",gap:10}} onClick={()=>openFolder(f)}>
+                    <IconFolder />
+                    <span style={{flex:1}}>{f.name}</span>
+                    <span style={{color:"var(--muted)",fontSize:12}}>▸</span>
+                  </div>
+                  {/* Botão de selecionar pasta inteira */}
+                  <button
+                    onClick={e=>{e.stopPropagation();selectEntireFolder(f);}}
+                    disabled={loadingFolder===f.id}
+                    title="Selecionar todos os vídeos desta pasta"
+                    style={{fontSize:10,padding:"3px 8px",borderRadius:6,border:"1px solid rgba(124,92,252,0.3)",background:"rgba(124,92,252,0.08)",color:"var(--accent-light)",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}
+                  >
+                    {loadingFolder===f.id ? "..." : pickerMode ? "📂 Usar pasta" : "+ pasta"}
+                  </button>
                 </div>
               ))}
 
@@ -310,13 +354,29 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
               {!loading&&folders.length===0&&videos.length===0 && (
                 <div style={{textAlign:"center",padding:40,color:"var(--muted)",fontSize:13}}>Pasta vazia</div>
               )}
+
+              {/* Botão confirmar seleção no modo picker */}
+              {pickerMode && selected.size > 0 && (
+                <div style={{padding:"12px 0 4px",borderTop:"1px solid var(--border)",marginTop:10}}>
+                  <button
+                    className="btn btn-primary"
+                    style={{width:"100%"}}
+                    onClick={() => {
+                      const chosen = videos.filter(v => selected.has(v.id));
+                      onPick?.(chosen);
+                    }}
+                  >
+                    ✓ Usar {selected.size} vídeo{selected.size !== 1 ? "s" : ""} selecionado{selected.size !== 1 ? "s" : ""}
+                  </button>
+                </div>
+              )}
             </>
           )}
         </>
       )}
 
-      {/* ── Painel de configurações — aparece quando há vídeos selecionados ── */}
-      {drive.isConnected && selected.size>0 && (
+      {/* ── Painel de configurações — aparece quando há vídeos selecionados e NÃO é pickerMode ── */}
+      {drive.isConnected && selected.size>0 && !pickerMode && (
         <div style={{marginTop:20,padding:16,background:"var(--bg2)",borderRadius:12,border:"1px solid var(--border)",display:"flex",flexDirection:"column",gap:14}}>
 
           {/* Horário e intervalo */}
