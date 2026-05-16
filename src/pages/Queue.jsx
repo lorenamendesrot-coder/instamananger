@@ -752,13 +752,14 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
 
           {/* ── Painel de resultados finais ─────────────────────────────────── */}
           {/* Mostra apenas quando o item está concluído (done/error) e tem resultados */}
-          {(item.status === "done" || item.status === "error") && item.results?.length > 0 && (() => {
-            const ok   = item.results.filter(r => r.success);
-            const fail = item.results.filter(r => !r.success);
+          {item.results?.length > 0 && (() => {
+            const ok      = item.results.filter(r => r.success);
+            const retrying = item.results.filter(r => !r.success && r.retrying);
+            const fail    = item.results.filter(r => !r.success && !r.retrying);
             return (
               <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
                 {/* Resumo */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                     Resultado
                   </span>
@@ -767,51 +768,68 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
                       ✅ {ok.length} publicado{ok.length > 1 ? "s" : ""}
                     </span>
                   )}
+                  {retrying.length > 0 && (
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "var(--warning)", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 20, padding: "1px 8px" }}>
+                      ↻ {retrying.length} retry
+                    </span>
+                  )}
                   {fail.length > 0 && (
                     <span style={{ fontSize: 11, fontWeight: 700, color: "var(--danger)", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 20, padding: "1px 8px" }}>
                       ❌ {fail.length} falhou{fail.length > 1 ? "ram" : ""}
                     </span>
                   )}
+                  <span style={{ fontSize: 10, color: "var(--muted)", marginLeft: "auto" }}>
+                    {ok.length + fail.length + retrying.length}/{item.accounts?.length || "?"} contas
+                  </span>
                 </div>
 
                 {/* Linhas por conta */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  {item.results.map((r, i) => (
-                    <div key={i} style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      fontSize: 10, padding: "3px 8px", borderRadius: 6,
-                      background: r.success ? "rgba(34,197,94,0.06)" : "rgba(239,68,68,0.06)",
-                      border: `1px solid ${r.success ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)"}`,
-                    }}>
-                      <span style={{ fontSize: 12 }}>{r.success ? "✅" : "❌"}</span>
-                      <span style={{ fontWeight: 700, color: "var(--text)", minWidth: 90 }}>@{r.username}</span>
-                      {r.success ? (
-                        <>
-                          <span style={{ color: "var(--success)", fontWeight: 600 }}>Publicado</span>
-                          {r.published_at && (
-                            <span style={{ color: "var(--muted)", marginLeft: "auto" }}>
-                              {new Date(r.published_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                            </span>
-                          )}
-                          {r.media_id && (
-                            <a
-                              href={`https://www.instagram.com/p/${r.media_id}/`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{ color: "var(--accent-light)", marginLeft: 4, textDecoration: "none", fontWeight: 600 }}
-                              title="Ver no Instagram"
-                            >
-                              ↗
-                            </a>
-                          )}
-                        </>
-                      ) : (
-                        <span style={{ color: "var(--danger)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
-                          {r.error || "Erro desconhecido"}
-                        </span>
-                      )}
-                    </div>
-                  ))}
+                  {item.results.map((r, i) => {
+                    const isRetrying = !r.success && r.retrying;
+                    const bg     = r.success ? "rgba(34,197,94,0.06)" : isRetrying ? "rgba(245,158,11,0.06)" : "rgba(239,68,68,0.06)";
+                    const border = r.success ? "rgba(34,197,94,0.2)"  : isRetrying ? "rgba(245,158,11,0.2)"  : "rgba(239,68,68,0.2)";
+                    const icon   = r.success ? "✅" : isRetrying ? "↻" : "❌";
+                    return (
+                      <div key={i} style={{
+                        display: "flex", alignItems: "center", gap: 6,
+                        fontSize: 10, padding: "3px 8px", borderRadius: 6,
+                        background: bg, border: `1px solid ${border}`,
+                      }}>
+                        <span style={{ fontSize: 12 }}>{icon}</span>
+                        <span style={{ fontWeight: 700, color: "var(--text)", minWidth: 90 }}>@{r.username}</span>
+                        {r.success ? (
+                          <>
+                            <span style={{ color: "var(--success)", fontWeight: 600 }}>Publicado</span>
+                            {r.published_at && (
+                              <span style={{ color: "var(--muted)", marginLeft: "auto" }}>
+                                {new Date(r.published_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            )}
+                            {r.media_id && (
+                              <a
+                                href={`https://www.instagram.com/p/${r.media_id}/`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ color: "var(--accent-light)", marginLeft: 4, textDecoration: "none", fontWeight: 600 }}
+                                title="Ver no Instagram"
+                              >
+                                ↗
+                              </a>
+                            )}
+                          </>
+                        ) : isRetrying ? (
+                          <span style={{ color: "var(--warning)", fontStyle: "italic" }}>
+                            Retry em andamento…
+                          </span>
+                        ) : (
+                          <span style={{ color: "var(--danger)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
+                            {r.error || "Erro desconhecido"}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );

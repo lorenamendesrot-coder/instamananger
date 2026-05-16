@@ -189,12 +189,22 @@ async function pushResultToParent(store, historyId, result) {
       const existing   = (parent.results || []).filter((r) => r.account_id !== result.account_id);
       const newResults = [...existing, result];
 
-      // Verifica se ainda há sub-itens pendentes/running para este historyId
+      // Verifica se ainda há sub-itens pendentes/running para este historyId.
+      // Inclui per_account com awaitingVideoFinish=true (video_finish ainda existe
+      // ou está prestes a ser criado — não pode fechar o pai ainda).
       const pendingChildren = queue.filter(
-        (x) => (x.type === "per_account" || x.type === "video_finish") &&
-               x.historyId === historyId &&
-               (x.status === "pending" || x.status === "running") &&
-               x.account_id !== result.account_id
+        (x) => x.historyId === historyId &&
+               x.account_id !== result.account_id &&
+               (
+                 // per_account ainda processando
+                 (x.type === "per_account" && (x.status === "pending" || x.status === "running")) ||
+                 // per_account aguardando video_finish (status=done mas vídeo não confirmado)
+                 (x.type === "per_account" && x.status === "done" && x.awaitingVideoFinish) ||
+                 // video_finish ainda processando
+                 (x.type === "video_finish" && (x.status === "pending" || x.status === "running")) ||
+                 // retry pendente (1ª falha, ainda vai tentar de novo)
+                 (x.type === "per_account" && x.status === "pending" && x.retryOf)
+               )
       );
 
       const allDone = pendingChildren.length === 0;
@@ -338,7 +348,8 @@ async function processPerAccount(store, item) {
     const alreadyFailed = item.failedAccountIds || [];
 
     if (!alreadyFailed.includes(item.account_id)) {
-      // 1ª falha → reagenda em 10min
+      // 1ª falha → reagenda em 10min, mas já registra resultado provisório no pai
+      // para não "sumir" da lista. Será sobrescrito se a 2ª tentativa tiver sucesso.
       await queueSave(store, {
         ...item,
         id:               `retry-${item.id}-${Date.now()}`,
@@ -349,6 +360,15 @@ async function processPerAccount(store, item) {
         createdAt:        new Date().toISOString(),
       });
       await queueUpdate(store, { ...item, status: "done", skippedForRetry: true });
+      // Registra resultado provisório para que a conta apareça na lista
+      // (pushResultToParent sobrescreve se account_id já existir)
+      await pushResultToParent(store, item.historyId, {
+        account_id: item.account_id,
+        username:   item.username,
+        success:    false,
+        error:      `${errMsg} (retry em 10min…)`,
+        retrying:   true,
+      });
       console.log(`[scheduler] ↻ @${item.username} reagendado em 10min`);
     } else {
       // 2ª falha → desiste
