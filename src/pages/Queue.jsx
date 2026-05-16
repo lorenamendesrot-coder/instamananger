@@ -662,90 +662,111 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
       </div>
 
       {/* ── Seção expandida: sub-items (per_account / video_finish) ── */}
-      {expanded && hasSubItems && !hasResults && (
-        <div style={{ borderTop: "1px solid var(--border)", padding: "10px 14px", background: "var(--bg3)" }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
-            Progresso por conta
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 5 }}>
-            {subItems.map((sub, i) => {
-              const s = statusStyle(sub.status);
-              return (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderRadius: 7, background: s.bg, border: `1px solid ${s.border}` }}>
-                  <span style={{ fontSize: 12, flexShrink: 0 }}>{sub.label ? "🎬" : s.icon}</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    @{sub.username}
-                  </span>
-                  {sub.retrying && <span style={{ fontSize: 9, color: "var(--warning)" }}>retry</span>}
-                  {sub.attempts > 0 && <span style={{ fontSize: 9, color: "var(--muted)", flexShrink: 0 }}>×{sub.attempts + 1}</span>}
-                  {sub.error && (
-                    <span title={sub.error} style={{ fontSize: 9, color: s.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 100, flexShrink: 0 }}>
-                      {sub.error.length > 28 ? sub.error.slice(0, 28) + "…" : sub.error}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* ── Seção unificada: todas as contas (em progresso + concluídas) ── */}
+      {expanded && (hasSubItems || hasResults) && (() => {
+        // Monta lista unificada: subItems (pending/running) + results (done/error)
+        // Evita duplicatas: se a conta já está em results, não mostra em subItems
+        const resultUsernames = new Set(results.map(r => r.username));
+        const pendingSubItems = subItems.filter(s => !resultUsernames.has(s.username));
+        const totalContas = accs.length || (pendingSubItems.length + results.length);
 
-      {/* ── Seção de resultados finais ── */}
-      {expanded && hasResults && (
-        <div style={{ borderTop: "1px solid var(--border)", background: "var(--bg3)" }}>
-          {/* Barra de resumo */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Resultado</span>
-            {resOk.length > 0 && (
-              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--success)", background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 20, padding: "2px 10px" }}>
-                ✅ {resOk.length} publicado{resOk.length > 1 ? "s" : ""}
-              </span>
-            )}
-            {resRetry.length > 0 && (
-              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--warning)", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 20, padding: "2px 10px" }}>
-                ↻ {resRetry.length} retry
-              </span>
-            )}
-            {resFail.length > 0 && (
-              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--danger)", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 20, padding: "2px 10px" }}>
-                ❌ {resFail.length} falhou{resFail.length > 1 ? "ram" : ""}
-              </span>
-            )}
-            <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--muted)" }}>
-              {results.length}/{accs.length || "?"} contas
-            </span>
-          </div>
+        return (
+          <div style={{ borderTop: "1px solid var(--border)", background: "var(--bg3)" }}>
 
-          {/* Grid de resultados por conta */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 5, padding: "0 14px 12px" }}>
-            {results.map((r, i) => {
-              const isRetrying = !r.success && r.retrying;
-              const rs = r.success ? statusStyle("done") : isRetrying ? statusStyle("running") : statusStyle("error");
-              return (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8, background: rs.bg, border: `1px solid ${rs.border}` }}>
-                  <span style={{ fontSize: 14, flexShrink: 0 }}>{r.success ? "✅" : isRetrying ? "⟳" : "❌"}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>@{r.username}</div>
-                    {r.success ? (
-                      <div style={{ fontSize: 10, color: "var(--success)", display: "flex", alignItems: "center", gap: 4 }}>
-                        Publicado
-                        {r.published_at && <span style={{ color: "var(--muted)" }}>{new Date(r.published_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>}
-                        {r.media_id && <a href={`https://www.instagram.com/p/${r.media_id}/`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent-light)", fontWeight: 700 }} title="Ver no Instagram">↗</a>}
+            {/* Barra de resumo */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", flexWrap: "wrap" }}>
+              {/* Contadores de status */}
+              {subItems.filter(s => !resultUsernames.has(s.username) && (s.status === "running")).length > 0 && (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--warning)", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 20, padding: "2px 10px" }}>
+                  ⟳ {subItems.filter(s => !resultUsernames.has(s.username) && s.status === "running").length} publicando
+                </span>
+              )}
+              {subItems.filter(s => !resultUsernames.has(s.username) && (s.status === "pending")).length > 0 && (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--info)", background: "rgba(56,189,248,0.12)", border: "1px solid rgba(56,189,248,0.3)", borderRadius: 20, padding: "2px 10px" }}>
+                  ⏳ {subItems.filter(s => !resultUsernames.has(s.username) && s.status === "pending").length} aguardando
+                </span>
+              )}
+              {resOk.length > 0 && (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--success)", background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 20, padding: "2px 10px" }}>
+                  ✅ {resOk.length} publicado{resOk.length > 1 ? "s" : ""}
+                </span>
+              )}
+              {resRetry.length > 0 && (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--warning)", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 20, padding: "2px 10px" }}>
+                  ↻ {resRetry.length} retry
+                </span>
+              )}
+              {resFail.length > 0 && (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--danger)", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 20, padding: "2px 10px" }}>
+                  ❌ {resFail.length} falhou{resFail.length > 1 ? "ram" : ""}
+                </span>
+              )}
+              <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--muted)" }}>
+                {results.length}/{totalContas} contas
+              </span>
+            </div>
+
+            {/* Grid unificado: em progresso primeiro, depois concluídos */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 3, padding: "0 14px 12px" }}>
+
+              {/* Contas ainda em progresso (pending/running) */}
+              {pendingSubItems.map((sub, i) => {
+                const s = statusStyle(sub.status);
+                return (
+                  <div key={"sub-" + i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, background: s.bg, border: `1px solid ${s.border}` }}>
+                    <span style={{ fontSize: 14, flexShrink: 0 }}>{sub.label ? "🎬" : s.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>@{sub.username}</div>
+                      <div style={{ fontSize: 10, color: s.color, display: "flex", alignItems: "center", gap: 6 }}>
+                        {sub.status === "running" ? "Publicando…" : sub.status === "pending" ? "Aguardando…" : sub.status}
+                        {sub.retrying && <span style={{ color: "var(--warning)" }}>retry</span>}
+                        {sub.attempts > 0 && <span style={{ color: "var(--muted)" }}>×{sub.attempts + 1} tentativas</span>}
                       </div>
-                    ) : isRetrying ? (
-                      <div style={{ fontSize: 10, color: "var(--warning)", fontStyle: "italic" }}>Retry em andamento…</div>
-                    ) : (
-                      <div style={{ fontSize: 10, color: "var(--danger)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.error}>
-                        {r.error || "Erro desconhecido"}
-                      </div>
+                      {sub.error && (
+                        <div style={{ fontSize: 10, color: "var(--danger)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={sub.error}>
+                          {sub.error}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Contas com resultado final */}
+              {results.map((r, i) => {
+                const isRetrying = !r.success && r.retrying;
+                const rs = r.success ? statusStyle("done") : isRetrying ? statusStyle("running") : statusStyle("error");
+                return (
+                  <div key={"res-" + i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, background: rs.bg, border: `1px solid ${rs.border}` }}>
+                    <span style={{ fontSize: 14, flexShrink: 0 }}>{r.success ? "✅" : isRetrying ? "⟳" : "❌"}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>@{r.username}</div>
+                      {r.success ? (
+                        <div style={{ fontSize: 10, color: "var(--success)", display: "flex", alignItems: "center", gap: 6 }}>
+                          Publicado
+                          {r.published_at && <span style={{ color: "var(--muted)" }}>{new Date(r.published_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>}
+                          {r.media_id && <a href={`https://www.instagram.com/p/${r.media_id}/`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent-light)", fontWeight: 700 }} title="Ver no Instagram">↗</a>}
+                        </div>
+                      ) : isRetrying ? (
+                        <div style={{ fontSize: 10, color: "var(--warning)", fontStyle: "italic" }}>Retry em andamento…</div>
+                      ) : (
+                        <div style={{ fontSize: 10, color: "var(--danger)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.error}>
+                          {r.error || "Erro desconhecido"}
+                        </div>
+                      )}
+                    </div>
+                    {r.attempts > 1 && (
+                      <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0, background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 20, padding: "1px 7px" }}>
+                        ×{r.attempts} tent.
+                      </span>
                     )}
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
