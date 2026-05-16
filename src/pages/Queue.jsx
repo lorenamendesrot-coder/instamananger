@@ -109,21 +109,29 @@ export default function Queue() {
   const mainQueue   = useMemo(() => queue.filter((q) => !q.type), [queue]);
   const videoFinish = useMemo(() => queue.filter((q) => q.type === "video_finish"), [queue]);
 
-  // Mapa itemId → video_finish items
-  // video_finish pode ter historyId (formato "h-xxx") ou parentId (item.id direto)
-  // O QueueItem busca por item.id, então mapeamos pelos dois
+  // Mapa itemId → video_finish items (por parentId ou historyId)
   const vfByParent = useMemo(() => {
     const map = {};
     for (const vf of videoFinish) {
-      // tenta parentId primeiro, depois historyId
       const keys = [vf.parentId, vf.historyId].filter(Boolean);
       for (const key of keys) {
         if (!map[key]) map[key] = [];
-        // evita duplicatas
         if (!map[key].find(x => x.id === vf.id)) map[key].push(vf);
       }
     }
     return map;
+  }, [videoFinish]);
+
+  // IDs de itens pai que ainda têm video_finish ativos (pending/running)
+  const activeVfParentIds = useMemo(() => {
+    const ids = new Set();
+    for (const vf of videoFinish) {
+      if (vf.status === "pending" || vf.status === "running") {
+        if (vf.parentId) ids.add(vf.parentId);
+        if (vf.historyId) ids.add(vf.historyId);
+      }
+    }
+    return ids;
   }, [videoFinish]);
 
   // Contadores de status
@@ -142,9 +150,12 @@ export default function Queue() {
   const filtered = useMemo(() => {
     let items = mainQueue;
 
-    // Filtro de status
+    // Filtro de status — itens "done" com video_finish ativos sempre aparecem
     if (filterStatus !== "all") {
-      items = items.filter((q) => q.status === filterStatus);
+      items = items.filter((q) =>
+        q.status === filterStatus ||
+        (q.status === "done" && activeVfParentIds.has(q.id))
+      );
     }
 
     // Filtro de dia
@@ -398,6 +409,7 @@ export default function Queue() {
           items={filtered}
           filterDay={filterDay}
           vfByParent={vfByParent}
+          activeVfParentIds={activeVfParentIds}
           onEdit={openEdit}
           onRemove={(id) => setConfirmModal({ type: "removeItem", id })}
           onForce={(item) => setForceConfirm(item)}
@@ -480,7 +492,7 @@ export default function Queue() {
 }
 
 // ─── QueueList — lista com separadores de dia ────────────────────────────────
-function QueueList({ items, filterDay, vfByParent, onEdit, onRemove, onForce, forcingId, selecting, selected, onToggleSelect }) {
+function QueueList({ items, filterDay, vfByParent, activeVfParentIds, onEdit, onRemove, onForce, forcingId, selecting, selected, onToggleSelect }) {
   // Quando "Todos os dias" está ativo, agrupa por dia com separador
   const groups = useMemo(() => {
     if (filterDay !== "all") return [{ label: null, items }];
@@ -524,6 +536,7 @@ function QueueList({ items, filterDay, vfByParent, onEdit, onRemove, onForce, fo
               key={item.id}
               item={item}
               vfItems={vfByParent[item.id]}
+              hasActiveVf={activeVfParentIds?.has(item.id)}
               onEdit={onEdit}
               onRemove={onRemove}
               onForce={onForce}
@@ -540,8 +553,11 @@ function QueueList({ items, filterDay, vfByParent, onEdit, onRemove, onForce, fo
 }
 
 // ─── QueueItem — card individual ─────────────────────────────────────────────
-function QueueItem({ item, vfItems, onEdit, onRemove, onForce, forcingId, selecting, isSelected, onToggleSelect }) {
-  const info          = STATUS_INFO[item.status] || STATUS_INFO.pending;
+function QueueItem({ item, vfItems, hasActiveVf, onEdit, onRemove, onForce, forcingId, selecting, isSelected, onToggleSelect }) {
+  // Se está "done" mas ainda tem video_finish processando, mostra status especial
+  const isPublishingVideos = item.status === "done" && hasActiveVf;
+  const effectiveStatus    = isPublishingVideos ? "running" : item.status;
+  const info               = STATUS_INFO[effectiveStatus] || STATUS_INFO.pending;
   const scheduledDate = new Date(item.scheduledAt);
   const isPast        = item.scheduledAt < Date.now();
   const thumbUrl      = item.mediaType === "IMAGE" ? item.mediaUrl : null;
@@ -592,7 +608,17 @@ function QueueItem({ item, vfItems, onEdit, onRemove, onForce, forcingId, select
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4, flexWrap: "wrap" }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: info.color }}>
-              {item.status === "running" ? "⟳ " : ""}{info.label.toUpperCase()}
+              {isPublishingVideos ? (
+                <>
+                  ⟳ PUBLICANDO VÍDEOS{" "}
+                  <span style={{ fontWeight: 400, opacity: 0.8 }}>
+                    {(vfItems || []).filter(v => v.status === "done").length}/
+                    {(vfItems || []).length}
+                  </span>
+                </>
+              ) : (
+                <>{effectiveStatus === "running" ? "⟳ " : ""}{info.label.toUpperCase()}</>
+              )}
             </span>
             <span style={{ fontSize: 10, color: "var(--muted)", background: "var(--bg3)", padding: "1px 6px", borderRadius: 4 }}>
               {item.postType}

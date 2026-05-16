@@ -353,13 +353,6 @@ async function processItem(store, item) {
     }
 
     // ── Finaliza item original ────────────────────────────────────────────
-    // Verifica se ainda tem video_finish pendentes para este item
-    const allQueue       = await queueReadAll(store);
-    const pendingFinish  = allQueue.filter(
-      (x) => x.type === "video_finish" && x.status === "pending" && x.historyId && item.historyId && x.historyId === item.historyId
-    );
-    const stillPending   = pendingFinish.length > 0;
-
     if (item.loop) {
       const HOUR_MS = 3600 * 1000;
       const JITTER  = Math.floor(Math.random() * 360 - 180) * 1000;
@@ -369,13 +362,10 @@ async function processItem(store, item) {
         scheduledAt: item.scheduledAt + HOUR_MS + JITTER,
         runCount:    (item.runCount || 0) + 1,
       });
-    } else if (stillPending) {
-      // Tem video_finish ainda rodando — fica como "running" até pushResultToParent
-      // acumular todos os resultados. O App.jsx vai sincronizar o histórico depois.
-      console.log(`[scheduler] item ${item.id} — aguardando ${pendingFinish.length} video_finish(es)`);
-      // Não altera o status — permanece "running" até o último video_finish terminar
     } else {
-      // Nenhum video_finish pendente — todos os resultados já foram acumulados
+      // Marca done imediatamente. Para Reels, allFinishedResults pode estar vazio
+      // — os resultados reais chegam via video_finish e são salvos pelo pushResultToParent.
+      // O browser sincroniza o histórico lendo item.results após todos video_finish terminarem.
       await queueUpdate(store, {
         ...item,
         status:      "done",
