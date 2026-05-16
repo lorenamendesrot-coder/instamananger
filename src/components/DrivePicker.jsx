@@ -113,6 +113,7 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
   const [gapMinutes,  setGapMinutes]  = useState(60);
   const [jitterMin,   setJitterMin]   = useState(10);
   const [loop,        setLoop]        = useState(false);
+  const [shuffle,     setShuffle]     = useState(false);
   const [scheduling,  setScheduling]  = useState(false);
 
   // Seleção de contas — começa com todas selecionadas
@@ -211,7 +212,10 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
       const { refresh_token } = drive.tokenData || {};
       if (!refresh_token) { setError("Sessão do Drive sem refresh_token. Desconecte e reconecte o Drive."); return; }
 
-      const chosenVideos = videos.filter(v=>selected.has(v.id));
+      let chosenVideos = videos.filter(v=>selected.has(v.id));
+      if (shuffle) {
+        chosenVideos = [...chosenVideos].sort(() => Math.random() - 0.5);
+      }
       // startTime está em horário de Brasília — converter para UTC
       const startMs      = localInputToUTC(startTime);
       const gapMs        = gapMinutes * 60 * 1000;
@@ -420,6 +424,13 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
                 <option value={15}>± 15 min</option>
                 <option value={20}>± 20 min</option>
                 <option value={30}>± 30 min</option>
+              </select>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>Ordem das mídias</div>
+              <select value={shuffle ? "random" : "order"} onChange={e=>setShuffle(e.target.value==="random")} style={{background:"var(--bg)",color:"var(--fg)",border:"1px solid var(--border)",borderRadius:7,padding:"6px 10px",fontSize:13,width:"100%"}}>
+                <option value="order">Em ordem (1ª, 2ª, 3ª...)</option>
+                <option value="random">Aleatória 🎲</option>
               </select>
             </div>
           </div>
