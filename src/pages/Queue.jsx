@@ -548,11 +548,14 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
       background: isSelected ? "rgba(124,92,252,0.07)" : "var(--bg2)",
       overflow: "hidden",
       transition: "all 0.15s",
-      cursor: selecting ? "pointer" : "default",
-    }} onClick={selecting ? () => onToggleSelect(item.id) : undefined}>
+      cursor: selecting ? "pointer" : (hasSubItems || hasResults) ? "pointer" : "default",
+    }}>
 
       {/* ── Linha principal ── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px" }}>
+      <div
+        style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: selecting ? "pointer" : (hasSubItems || hasResults) ? "pointer" : "default", userSelect: "none" }}
+        onClick={selecting ? () => onToggleSelect(item.id) : (hasSubItems || hasResults) ? (e) => { e.stopPropagation(); setExpanded(p => !p); } : undefined}
+      >
 
         {/* Checkbox seleção */}
         {selecting && (
@@ -649,12 +652,11 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
             </button>
           </div>
 
-          {/* Botão expandir — só aparece se há subItems ou resultados */}
+          {/* Indicador de expandir — clique no card inteiro para expandir */}
           {(hasSubItems || hasResults) && (
-            <button onClick={e => { e.stopPropagation(); setExpanded(p => !p); }}
-              style={{ fontSize: 10, color: "var(--muted)", background: "none", border: "none", cursor: "pointer", padding: "2px 4px", display: "flex", alignItems: "center", gap: 3 }}>
-              {expanded ? "▲ ocultar" : `▼ detalhes (${hasResults ? results.length : subItems.length})`}
-            </button>
+            <div style={{ fontSize: 11, color: "var(--muted)", padding: "2px 0", display: "flex", alignItems: "center", gap: 3, pointerEvents: "none" }}>
+              {expanded ? "▲" : "▼"}
+            </div>
           )}
         </div>
       </div>
