@@ -11,6 +11,12 @@
   port = 8888
   targetPort = 5173
 
+[[headers]]
+  for = "/api/auth-callback*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "unsafe-none"
+    Cross-Origin-Embedder-Policy = "unsafe-none"
+
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"

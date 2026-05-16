@@ -718,7 +718,7 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>@{sub.username}</div>
                       <div style={{ fontSize: 10, color: s.color, display: "flex", alignItems: "center", gap: 6 }}>
-                        {sub.status === "running" ? "Publicando…" : sub.status === "pending" ? "Aguardando…" : sub.status}
+                        {sub.status === "running" ? "Publicando…" : sub.status === "pending" ? "Aguardando…" : sub.status === "done" ? "Publicado" : sub.status === "error" ? "Erro" : sub.status}
                         {sub.retrying && <span style={{ color: "var(--warning)" }}>retry</span>}
                         {sub.attempts > 0 && <span style={{ color: "var(--muted)" }}>×{sub.attempts + 1} tentativas</span>}
                       </div>
