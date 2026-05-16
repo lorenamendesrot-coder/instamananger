@@ -3,7 +3,8 @@ import { NavLink } from "react-router-dom";
 import { useScheduler } from "./App.jsx";
 
 const NAV = [
-  { to: "/",               label: "Contas",       icon: "👤", desc: "Gerencie suas contas"  },
+  { to: "/",          label: "Dashboard", icon: "📊", desc: "Visão geral"         },
+  { to: "/contas",       label: "Contas",       icon: "👤", desc: "Gerencie suas contas"  },
   { to: "/aquecimento",    label: "Aquecimento",  icon: "🔥", desc: "Aquecer contas"        },
   { to: "/fila",           label: "Fila",         icon: "🗂️", desc: "Agendamentos ativos"   },
   { to: "/historico",      label: "Histórico",    icon: "📊", desc: "Posts publicados"      },
@@ -55,7 +56,7 @@ export default function Sidebar({ accounts, oauthUrl, syncing, onConnectInstagra
 
       {/* Contas conectadas */}
       {accounts.length > 0 && (
-        <NavLink to="/" style={{ textDecoration: "none" }}>
+        <NavLink to="/contas" style={{ textDecoration: "none" }}>
           <div style={{ margin: "10px 10px 0", padding: "10px 12px", borderRadius: 10, background: "rgba(124,92,252,0.08)", border: "1px solid rgba(124,92,252,0.18)", display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg, var(--accent), #9b4dfc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>👥</div>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -75,7 +76,7 @@ export default function Sidebar({ accounts, oauthUrl, syncing, onConnectInstagra
       {/* Nav */}
       <nav style={{ padding: "8px 10px", flex: 1, marginTop: 6 }}>
         {NAV.map((item) => (
-          <NavLink key={item.to} to={item.to} end={item.to === "/"}
+          <NavLink key={item.to} to={item.to} end={item.to === "/" || item.to === "/contas"}
             style={({ isActive }) => ({
               display: "flex", alignItems: "center", gap: 10,
               padding: "9px 12px", borderRadius: 10, marginBottom: 2,

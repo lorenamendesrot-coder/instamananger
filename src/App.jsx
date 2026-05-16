@@ -1,7 +1,8 @@
 import { Routes, Route, useLocation } from "react-router-dom";
 import { useEffect, useState, useCallback, useRef, createContext, useContext } from "react";
 
-import Accounts from "./pages/Accounts.jsx";
+import Dashboard from "./pages/Dashboard.jsx";
+import Accounts  from "./pages/Accounts.jsx";
 import Queue    from "./pages/Queue.jsx";
 import History  from "./pages/History.jsx";
 import Warmup   from "./pages/Warmup.jsx";
@@ -442,7 +443,8 @@ function AppShell() {
         <main style={{ flex: 1, overflow: "auto", minWidth: 0, background: "var(--bg)" }}>
           <Toast toast={toast} />
           <Routes>
-            <Route path="/"               element={<Accounts />} />
+            <Route path="/"               element={<Dashboard />} />
+            <Route path="/contas"           element={<Accounts />} />
             <Route path="/fila"           element={<Queue />} />
             <Route path="/historico"      element={<History />} />
             <Route path="/aquecimento"    element={<Warmup />} />
