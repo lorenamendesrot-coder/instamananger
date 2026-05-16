@@ -725,31 +725,17 @@ export default function Warmup() {
 
           {/* Configurações gerais — ambos os modos */}
           <div className="card">
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 14 }}>⚙️ Configurações Gerais</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <div>
-                <label>Data de início</label>
-                <input
-                  type="date"
-                  value={startDate}
-                  min={(() => { const n = new Date(); return new Date(n.getTime() - n.getTimezoneOffset() * 60000).toISOString().slice(0, 10); })()}
-                  onChange={(e) => setStartDate(e.target.value)}
-                />
-              </div>
-              <div>
-                <label>Distribuição de mídias</label>
-                <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                  {[{ id: "roundrobin", label: "🔄 Round-robin" }, { id: "random", label: "🎲 Aleatório" }].map(({ id, label }) => (
-                    <button key={id} onClick={() => setDistribution(id)} style={{
-                      flex: 1, padding: "8px 10px", borderRadius: 8, fontSize: 11,
-                      border: `1px solid ${distribution === id ? "var(--accent)" : "var(--border)"}`,
-                      background: distribution === id ? "rgba(124,92,252,0.1)" : "var(--bg3)",
-                      color: distribution === id ? "var(--accent-light)" : "var(--muted)",
-                      fontWeight: distribution === id ? 600 : 400,
-                    }}>{label}</button>
-                  ))}
-                </div>
-              </div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 14 }}>DISTRIBUIÇÃO DE MÍDIAS</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[{ id: "roundrobin", label: "🔄 Round-robin" }, { id: "random", label: "🎲 Aleatório" }].map(({ id, label }) => (
+                <button key={id} onClick={() => setDistribution(id)} style={{
+                  flex: 1, padding: "8px 10px", borderRadius: 8, fontSize: 11,
+                  border: `1px solid ${distribution === id ? "var(--accent)" : "var(--border)"}`,
+                  background: distribution === id ? "rgba(124,92,252,0.1)" : "var(--bg3)",
+                  color: distribution === id ? "var(--accent-light)" : "var(--muted)",
+                  fontWeight: distribution === id ? 600 : 400,
+                }}>{label}</button>
+              ))}
             </div>
           </div>
 
