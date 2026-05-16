@@ -32,3 +32,6 @@
 
 [functions."scheduler"]
   timeout = 26
+
+[functions."drive-browse"]
+  timeout = 20
