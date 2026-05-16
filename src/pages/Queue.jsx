@@ -501,7 +501,7 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   const isPublishing    = (item.status === "done" || item.status === "posted" || item.status === "running") && (hasActiveVf || hasActivePa) && !allPaDone;
   const effectiveStatus = isPublishing ? "running" : item.status;
   // isPast: horário passou, ainda pending, nunca rodou — badge laranja
-  const isOverdue = item.status === "pending" && item.scheduledAt < Date.now() && !item.runCount;
+  const isOverdue = item.status === "pending" && item.scheduledAt < Date.now() && !item.runCount && (item.results || []).length === 0;
   const ss = isOverdue
     ? { color: "var(--warning)", bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.30)", icon: "⚠" }
     : statusStyle(effectiveStatus);
