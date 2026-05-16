@@ -35,10 +35,14 @@ async function tick() {
     for (const item of due) await runItem(item);
 
     // 2. Itens video_finish (vídeos aguardando processamento do Instagram)
+    // Delay de 15s entre contas para evitar rate limit (#4) da Meta ao chamar media_publish
     const dueFin = queue.filter(
       (x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now
     );
-    for (const item of dueFin) await runVideoFinish(item);
+    for (let i = 0; i < dueFin.length; i++) {
+      if (i > 0) await sleep(15000);
+      await runVideoFinish(dueFin[i]);
+    }
   } finally {
     _tickRunning = false;
   }
@@ -232,9 +236,37 @@ async function runVideoFinish(item) {
       } catch (_) {}
 
     } else if (result && !result.success) {
-      // ── Erro definitivo do Instagram ──────────────────────────────────────
+      // ── Erro definitivo ou rate limit ─────────────────────────────────────
       const errMsg = result.error || "Erro desconhecido";
       console.warn(`[SW] video_finish ❌ @${item.username}: ${errMsg}`);
+
+      // Rate limit (code 4) — reagenda em vez de marcar como erro definitivo
+      if (result.rate_limited) {
+        const attempts = (item.attempts || 0) + 1;
+        if (attempts >= item.maxAttempts) {
+          // Esgotou tentativas mesmo com rate limit
+          const histEntry = await getHistoryItem(item.historyId);
+          if (histEntry) {
+            const updatedResults = [...(histEntry.results || []), {
+              account_id: item.account_id, username: item.username, success: false, error: errMsg,
+            }];
+            const updatedPending = (histEntry.pending_accounts || []).filter(
+              (a) => a.account_id !== item.account_id
+            );
+            await saveItem("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
+          }
+          await updateItem(item.id, { status: "error", error: errMsg });
+          notifyClients({ type: "QUEUE_UPDATE" });
+        } else {
+          // Backoff exponencial: 60s, 120s, 240s, 480s... máx 30min
+          const waitMs = Math.min(60000 * Math.pow(2, attempts - 1), 30 * 60 * 1000);
+          console.log(`[SW] video_finish rate_limited @${item.username} — reagendando em ${Math.round(waitMs/1000)}s (tentativa ${attempts}/${item.maxAttempts})`);
+          await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + waitMs });
+        }
+        return;
+      }
+
+      // Erro definitivo do Instagram
 
       // Atualiza histórico: move da lista pending_accounts para results com erro
       const histEntry = await getHistoryItem(item.historyId);
