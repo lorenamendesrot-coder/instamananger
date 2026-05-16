@@ -539,10 +539,10 @@ export default async function handler(request) {
     await queueUpdate(store, { ...item, status: "pending", scheduledAt: now + 5000 });
   }
 
-  // Itens pendentes vencidos por tipo
-  const dueNormal     = queue.filter((x) => !x.type && x.status === "pending" && x.scheduledAt <= now);
-  const duePerAccount = queue.filter((x) => x.type === "per_account" && x.status === "pending" && x.scheduledAt <= now);
-  const dueFinish     = queue.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now);
+  // Itens pendentes vencidos por tipo — ordenados por scheduledAt para respeitar a ordem cronológica
+  const dueNormal     = queue.filter((x) => !x.type && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
+  const duePerAccount = queue.filter((x) => x.type === "per_account" && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
+  const dueFinish     = queue.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
 
   console.log(`[scheduler] ${dueNormal.length} posts + ${duePerAccount.length} per_account + ${dueFinish.length} video_finish vencidos`);
 
