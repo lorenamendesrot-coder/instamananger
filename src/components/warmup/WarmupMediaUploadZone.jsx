@@ -41,6 +41,7 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
   const [showDrive, setShowDrive]     = useState(false);
   const [dragging, setDragging]       = useState(false);
   const [uploading, setUploading]     = useState({}); // fileId → progress
+  const abortRef  = useRef(false);
   const IMPORT_KEY = `driveImport_${typeConfig.id}`;
   const [driveImportState, setDriveImportState] = useState(() => {
     try { return JSON.parse(localStorage.getItem(IMPORT_KEY) || "null"); } catch { return null; }
@@ -66,6 +67,11 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
   function clearImportError() {
     setDriveImportState(null);
     try { localStorage.removeItem(IMPORT_KEY); } catch {}
+  }
+  function cancelImport() {
+    abortRef.current = true;
+    try { localStorage.removeItem(IMPORT_KEY); } catch {}
+    setDriveImportState(null);
   }
   const drive = useDriveAuth();
 
@@ -188,12 +194,13 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
                 onClose={() => setShowDrive(false)}
                 onPick={async (pickedVideos) => {
                   setShowDrive(false);
+                  abortRef.current = false;
                   setImportProgress(0, pickedVideos.length, null);
                   try {
                     const { refresh_token } = drive.tokenData || {};
                     if (!refresh_token) throw new Error("Sessão do Drive sem refresh_token. Desconecte e reconecte.");
 
-                    const CONCURRENCY = 5;
+                    const CONCURRENCY = 1;
                     const urls = new Array(pickedVideos.length).fill(null);
                     let completed = 0;
                     let currentName = null;
@@ -202,42 +209,22 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
                     const queue = pickedVideos.map((v, idx) => ({ v, idx }));
                     let queuePos = 0;
 
-                    // Polling do job até concluir (background function — sem timeout)
-                    async function waitForJob(jobId, fileName) {
-                      const INTERVAL = 2000;
-                      const MAX_WAIT = 900000; // 15 minutos
-                      const started  = Date.now();
-                      while (Date.now() - started < MAX_WAIT) {
-                        await new Promise(r => setTimeout(r, INTERVAL));
-                        const poll = await fetch(`/api/drive-proxy-bg?job_id=${jobId}`);
-                        const data = await poll.json();
-                        if (data.status === "done")  return data.url;
-                        if (data.status === "error") throw new Error(data.error || `Falha ao importar "${fileName}"`);
-                        // status "running" ou "pending" — continua polling
-                      }
-                      throw new Error(`Timeout ao importar "${fileName}" — tente novamente`);
-                    }
-
                     async function worker() {
                       while (true) {
+                        if (abortRef.current) break;
                         const task = queue[queuePos++];
                         if (!task) break;
                         const { v, idx } = task;
                         currentName = v.name;
                         setImportProgress(completed, pickedVideos.length, currentName);
-
-                        // Dispara o job (retorna imediatamente com job_id)
-                        const res  = await fetch("/api/drive-proxy-bg", {
+                        const res  = await fetch("/api/drive-proxy", {
                           method:  "POST",
                           headers: { "Content-Type": "application/json" },
                           body:    JSON.stringify({ file_id: v.id, file_name: v.name, refresh_token }),
                         });
                         const data = await res.json();
                         if (!res.ok) throw new Error(data.error || `Erro ao importar "${v.name}"`);
-
-                        // Aguarda o job terminar via polling
-                        const url = await waitForJob(data.job_id, v.name);
-                        urls[idx] = url;
+                        urls[idx] = data.url;
                         completed++;
                         if (completed >= pickedVideos.length) {
                           const validUrls = urls.filter(Boolean);
@@ -267,9 +254,16 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
             <span className="spinner" style={{ width: 13, height: 13, borderTopColor: "var(--accent)", display: "inline-block", flexShrink: 0 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent-light)", display: "flex", justifyContent: "space-between" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent-light)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span>Importando do Google Drive...</span>
-                <span style={{ fontWeight: 700, color: "var(--text)" }}>{driveImportState.current}/{driveImportState.total}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 700, color: "var(--text)" }}>{driveImportState.current}/{driveImportState.total}</span>
+                  <button
+                    onClick={cancelImport}
+                    title="Cancelar importação e limpar"
+                    style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 6, color: "var(--danger)", fontSize: 10, fontWeight: 700, padding: "2px 8px", cursor: "pointer", lineHeight: 1.4 }}
+                  >✕ Parar</button>
+                </div>
               </div>
               {driveImportState.currentName && (
                 <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
