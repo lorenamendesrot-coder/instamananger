@@ -84,7 +84,7 @@ export default function Queue() {
   const [forcingId,    setForcingId]    = useState(null);
   const [forceConfirm, setForceConfirm] = useState(null);
 
-  const mainQueue   = useMemo(() => queue.filter((q) => !q.type || q.type === "group"), [queue]);
+  const mainQueue   = useMemo(() => queue.filter((q) => (!q.type || q.type === "group") && q.status !== "cancelled"), [queue]);
   const videoFinish = useMemo(() => queue.filter((q) => q.type === "video_finish"), [queue]);
   const perAccount  = useMemo(() => queue.filter((q) => q.type === "per_account"),  [queue]);
 

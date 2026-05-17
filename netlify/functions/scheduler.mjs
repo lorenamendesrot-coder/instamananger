@@ -229,6 +229,23 @@ async function pushResultToParent(store, historyId, result) {
         console.log(`[scheduler] ✅ item pai ${parent.id} concluído — ${newResults.filter(r => r.success).length}/${newResults.length} conta(s) publicadas${parent.loop ? " (loop — próximo em " + new Date(updated.scheduledAt).toLocaleTimeString("pt-BR") + ")" : ""}`);
       }
 
+      // Remove itens loop órfãos com o mesmo caption que ficaram pending/running sem processar
+      if (allDone && parent.loop) {
+        return queue.map((x) => {
+          if (
+            x.id !== parent.id &&
+            !x.type &&
+            x.loop &&
+            x.status === "pending" &&
+            x.caption === parent.caption &&
+            x.scheduledAt < updated.scheduledAt
+          ) {
+            return { ...x, status: "cancelled" };
+          }
+          return x === parent ? updated : x;
+        });
+      }
+
       return queue.map((x) => x.id === parent.id ? updated : x);
     });
   } catch (err) {
