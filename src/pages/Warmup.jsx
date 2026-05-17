@@ -42,7 +42,7 @@ export default function Warmup() {
     return localDate.toISOString().slice(0, 10);
   });
   const [distribution, setDistribution] = useState("roundrobin");
-  const [useNewOnly,   setUseNewOnly]   = useState(true);
+  const [useNewOnly,   setUseNewOnly]   = useState(false);
   const [selectedAccIds, setSelectedAccIds] = useState(null); // null = todas selecionadas
   const [urlInputs,    setUrlInputs]    = useState({ reels: "", feed: "", stories: "" });
   const [thumbUrl,     setThumbUrl]     = useState(""); // capa para Reels
