@@ -329,12 +329,15 @@ function SchedulerProvider({ addEntry, children }) {
       }
     };
 
-    // Poll adaptativo: 3s quando há itens rodando, 12s caso contrário
+    // Poll adaptativo: 4s quando há itens rodando/done, 12s caso contrário
     let ivTimeout;
     const scheduleTick = async () => {
+      const all = await qApi.getAll().catch(() => []);
+      const hasRunning = Array.isArray(all) && all.some(x =>
+        !x.type && (x.status === "running" || x.status === "pending")
+      );
       await tick();
-      const hasRunning = queue.some(x => x.status === "running" || x.status === "done");
-      ivTimeout = setTimeout(scheduleTick, hasRunning ? 3000 : 12000);
+      ivTimeout = setTimeout(scheduleTick, hasRunning ? 4000 : 12000);
     };
     scheduleTick();
     return () => { clearTimeout(ivTimeout); clearInterval(cronCheck); document.removeEventListener("visibilitychange", onVisible); };

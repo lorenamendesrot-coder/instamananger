@@ -101,10 +101,48 @@ export default async function handler(req) {
   try {
     const store = getQueueStore();
 
-    // GET — retorna todos os itens
+    // GET — retorna todos os itens (comprimido para evitar ERR_HTTP2_PROTOCOL_ERROR)
     if (req.method === "GET") {
       const { items } = await readWithEtag(store);
-      return json(items, 200, req);
+
+      // Strips campos pesados de sub-itens que o frontend não exibe diretamente
+      // mediaUrls pode ter 120 URLs longas — guardamos só a contagem
+      const slim = items.map((x) => {
+        if (x.type === "per_account" || x.type === "video_finish") return x;
+        const { mediaUrls, ...rest } = x;
+        return {
+          ...rest,
+          ...(mediaUrls ? { mediaUrlsCount: mediaUrls.length, mediaUrls } : {}),
+        };
+      });
+
+      const body    = JSON.stringify(slim);
+      const encoder = new TextEncoder();
+      const bytes   = encoder.encode(body);
+
+      // Gzip se o cliente aceitar (todos os browsers modernos aceitam)
+      const acceptEncoding = req.headers.get ? req.headers.get("accept-encoding") || "" : "";
+      if (acceptEncoding.includes("gzip") && typeof CompressionStream !== "undefined") {
+        const cs     = new CompressionStream("gzip");
+        const writer = cs.writable.getWriter();
+        writer.write(bytes);
+        writer.close();
+        const compressed = await new Response(cs.readable).arrayBuffer();
+        return new Response(compressed, {
+          status: 200,
+          headers: {
+            ...corsHeaders(req),
+            "Content-Encoding": "gzip",
+            "Content-Type":     "application/json",
+          },
+        });
+      }
+
+      // Fallback sem compressão
+      return new Response(body, {
+        status: 200,
+        headers: { ...corsHeaders(req), "Content-Type": "application/json" },
+      });
     }
 
     // POST — addBatch: insere ou substitui itens pelo id
