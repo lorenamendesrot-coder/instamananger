@@ -41,8 +41,32 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
   const [showDrive, setShowDrive]     = useState(false);
   const [dragging, setDragging]       = useState(false);
   const [uploading, setUploading]     = useState({}); // fileId → progress
-  const [driveImporting, setDriveImporting] = useState(false); // importando do Drive via proxy
-  const [driveImportError, setDriveImportError] = useState(null);
+  const IMPORT_KEY = `driveImport_${typeConfig.id}`;
+  const [driveImportState, setDriveImportState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(IMPORT_KEY) || "null"); } catch { return null; }
+  });
+  const driveImporting = driveImportState?.active === true;
+  const driveImportError = driveImportState?.error || null;
+
+  // Helpers para atualizar estado e persistir no localStorage
+  function setImportProgress(current, total, currentName) {
+    const s = { active: true, current, total, currentName };
+    setDriveImportState(s);
+    try { localStorage.setItem(IMPORT_KEY, JSON.stringify(s)); } catch {}
+  }
+  function setImportDone() {
+    setDriveImportState(null);
+    try { localStorage.removeItem(IMPORT_KEY); } catch {}
+  }
+  function setImportError(msg) {
+    const s = { active: false, error: msg };
+    setDriveImportState(s);
+    try { localStorage.setItem(IMPORT_KEY, JSON.stringify(s)); } catch {}
+  }
+  function clearImportError() {
+    setDriveImportState(null);
+    try { localStorage.removeItem(IMPORT_KEY); } catch {}
+  }
   const drive = useDriveAuth();
 
   const myFiles = files[typeConfig.id] || [];
@@ -164,28 +188,44 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
                 onClose={() => setShowDrive(false)}
                 onPick={async (pickedVideos) => {
                   setShowDrive(false);
-                  setDriveImporting(true);
-                  setDriveImportError(null);
+                  setImportProgress(0, pickedVideos.length, null);
                   try {
                     const { refresh_token } = drive.tokenData || {};
                     if (!refresh_token) throw new Error("Sessão do Drive sem refresh_token. Desconecte e reconecte.");
 
-                    const urls = [];
-                    for (const v of pickedVideos) {
-                      const res  = await fetch("/api/drive-proxy", {
-                        method:  "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body:    JSON.stringify({ file_id: v.id, file_name: v.name, refresh_token }),
-                      });
-                      const data = await res.json();
-                      if (!res.ok) throw new Error(data.error || `Erro ao importar "${v.name}"`);
-                      urls.push(data.url);
+                    const CONCURRENCY = 5;
+                    const urls = new Array(pickedVideos.length).fill(null);
+                    let completed = 0;
+
+                    // Processa em lotes de CONCURRENCY simultâneos
+                    for (let batch = 0; batch < pickedVideos.length; batch += CONCURRENCY) {
+                      const slice = pickedVideos.slice(batch, batch + CONCURRENCY);
+                      setImportProgress(completed, pickedVideos.length, slice.map(v => v.name).join(", "));
+
+                      const results = await Promise.all(
+                        slice.map(async (v, sliceIdx) => {
+                          const globalIdx = batch + sliceIdx;
+                          const res  = await fetch("/api/drive-proxy", {
+                            method:  "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body:    JSON.stringify({ file_id: v.id, file_name: v.name, refresh_token }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data.error || `Erro ao importar "${v.name}"`);
+                          return { idx: globalIdx, url: data.url };
+                        })
+                      );
+
+                      for (const r of results) urls[r.idx] = r.url;
+                      completed += slice.length;
+                      setImportProgress(completed, pickedVideos.length, null);
                     }
-                    if (urls.length) onAddUrl(typeConfig.id, urls);
+
+                    const validUrls = urls.filter(Boolean);
+                    if (validUrls.length) onAddUrl(typeConfig.id, validUrls);
+                    setImportDone();
                   } catch (err) {
-                    setDriveImportError(err.message);
-                  } finally {
-                    setDriveImporting(false);
+                    setImportError(err.message);
                   }
                 }}
                 onSchedule={() => {}}
@@ -196,19 +236,41 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
       )}
 
       {/* Status de importação do Drive */}
-      {driveImporting && (
-        <div style={{ marginBottom: 8, padding: "10px 14px", borderRadius: 9, background: "rgba(124,92,252,0.07)", border: "1px solid rgba(124,92,252,0.25)", display: "flex", alignItems: "center", gap: 10 }}>
-          <span className="spinner" style={{ width: 14, height: 14, borderTopColor: "var(--accent)", display: "inline-block", flexShrink: 0 }} />
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent-light)" }}>Importando do Google Drive...</div>
-            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>Baixando e gerando URLs públicas via proxy. Aguarde.</div>
+      {driveImporting && driveImportState && (
+        <div style={{ marginBottom: 8, padding: "12px 14px", borderRadius: 9, background: "rgba(124,92,252,0.07)", border: "1px solid rgba(124,92,252,0.25)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <span className="spinner" style={{ width: 13, height: 13, borderTopColor: "var(--accent)", display: "inline-block", flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent-light)", display: "flex", justifyContent: "space-between" }}>
+                <span>Importando do Google Drive...</span>
+                <span style={{ fontWeight: 700, color: "var(--text)" }}>{driveImportState.current}/{driveImportState.total}</span>
+              </div>
+              {driveImportState.currentName && (
+                <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  📄 {driveImportState.currentName}
+                </div>
+              )}
+            </div>
+          </div>
+          {/* Barra de progresso */}
+          <div style={{ height: 4, borderRadius: 99, background: "rgba(124,92,252,0.15)", overflow: "hidden" }}>
+            <div style={{
+              height: "100%",
+              borderRadius: 99,
+              background: "linear-gradient(90deg, var(--accent), #9b4dfc)",
+              width: `${driveImportState.total > 0 ? Math.round((driveImportState.current / driveImportState.total) * 100) : 0}%`,
+              transition: "width 0.4s ease",
+            }} />
+          </div>
+          <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 5 }}>
+            🛡 Limpando metadados e gerando URLs seguras... Pode mudar de aba.
           </div>
         </div>
       )}
       {driveImportError && (
         <div style={{ marginBottom: 8, padding: "10px 14px", borderRadius: 9, background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.25)", fontSize: 12, color: "var(--danger)", display: "flex", alignItems: "center", gap: 8 }}>
           <span>⚠️ {driveImportError}</span>
-          <button style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 14 }} onClick={() => setDriveImportError(null)}>✕</button>
+          <button style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 14 }} onClick={clearImportError}>✕</button>
         </div>
       )}
 
