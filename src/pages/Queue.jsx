@@ -538,8 +538,9 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
 
   // Badge de status label
   let statusLabel = "Agendado";
-  if (isPublishing && isGroup) statusLabel = `Publicando ${paDone}/${paTotal}`;
-  else if (isPublishing)       statusLabel = `Publicando ${vfDone}/${vfTotal}`;
+  if (isPublishing && isGroup && hasActivePa)  statusLabel = `Publicando ${paDone}/${paTotal}`;
+  else if (isPublishing && hasActivePa)        statusLabel = `Publicando ${vfDone}/${vfTotal}`;
+  else if (isPublishing && hasActiveVf)        statusLabel = `🎬 Processando vídeos ${vfDone}/${vfTotal}`;
   else if (effectiveStatus === "posted")  statusLabel = "✅ Postado com Sucesso!";
   else if (effectiveStatus === "done")    statusLabel = "Publicado";
   else if (effectiveStatus === "error")   statusLabel = "Erro";
