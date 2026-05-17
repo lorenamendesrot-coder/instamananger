@@ -700,8 +700,11 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
                     </div>
                     <span style={{ fontSize: 11, fontWeight: 700, color: rs.color, display: "flex", alignItems: "center", gap: 6 }}>
                       {r.success ? "Publicado" : isRetrying ? "Retry…" : "Erro"}
-                      {r.success && r.sanitized && (
-                        <span title="Metadados limpos — EXIF, timestamps e fingerprint removidos" style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "rgba(34,197,94,0.12)", color: "var(--success)", border: "1px solid rgba(34,197,94,0.25)", fontWeight: 600, cursor: "default" }}>🛡 limpo</span>
+                      {r.success && r.sanitized === true && (
+                        <span
+                          title={`Sanitização confirmada pelo servidor:\n• Metadados EXIF removidos\n• Timestamps zerados\n• Fingerprint único injetado\n• Hash MD5/SHA único por conta`}
+                          style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "rgba(34,197,94,0.12)", color: "var(--success)", border: "1px solid rgba(34,197,94,0.25)", fontWeight: 600, cursor: "help" }}
+                        >🛡 sanitizado</span>
                       )}
                       {r.success && r.media_id && (
                         <a href={`https://www.instagram.com/p/${r.media_id}/`} target="_blank" rel="noopener noreferrer"

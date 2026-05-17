@@ -283,7 +283,8 @@ async function processPerAccount(store, item) {
         throw new Error(proxyData.error || `drive-proxy HTTP ${proxyRes.status}`);
       }
       mediaUrl = proxyData.url;
-      console.log(`[scheduler] 📂 Drive proxy OK: ${mediaUrl}`);
+      if (proxyData.sanitized) item = { ...item, _sanitizedConfirmed: true };
+      console.log(`[scheduler] 📂 Drive proxy OK: ${mediaUrl} sanitized=${!!proxyData.sanitized}`);
     } catch (proxyErr) {
       console.error(`[scheduler] ❌ drive-proxy falhou para @${item.username}:`, proxyErr.message);
       await queueUpdate(store, { ...item, status: "error", error: `Falha ao baixar vídeo do Drive: ${proxyErr.message}`, finishedAt: new Date().toISOString() });
@@ -363,7 +364,7 @@ async function processPerAccount(store, item) {
         success:      true,
         media_id:     result.media_id,
         published_at: result.published_at,
-        sanitized:    !!(item.driveFileId && item.driveRefreshToken),
+        sanitized:    !!(item._sanitizedConfirmed),
       });
       return;
     }

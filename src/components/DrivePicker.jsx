@@ -3,7 +3,7 @@
 // Suporta modo inline (embutido na aba) e modo modal.
 // Novidades: seleção de contas por checkbox + horário padrão sempre no fuso Brasil (UTC-3).
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useDriveAuth } from "../useDriveAuth.js";
 
 function fmtSize(bytes) {
@@ -102,6 +102,7 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
   const [folders,  setFolders]  = useState([]);
   const [videos,   setVideos]   = useState([]);
   const [loading,  setLoading]  = useState(false);
+  const cacheRef = useRef({});  // cache por folderId para não recarregar ao trocar de aba
   const [error,    setError]    = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [loadingFolder, setLoadingFolder] = useState(null); // id da pasta sendo carregada recursivamente
@@ -145,7 +146,15 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
 
   const current = stack[stack.length - 1];
 
-  const load = useCallback(async (folderId) => {
+  const load = useCallback(async (folderId, force = false) => {
+    // Usa cache se já carregou essa pasta e não é forçado
+    if (!force && cacheRef.current[folderId]) {
+      const cached = cacheRef.current[folderId];
+      setFolders(cached.folders);
+      setVideos(cached.videos);
+      setError(null);
+      return;
+    }
     setLoading(true); setError(null);
     try {
       const token = await drive.getValidToken();
@@ -155,8 +164,11 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
       const data = await res.json();
       if (res.status === 401) { setError("Sessão expirada. Clique em Reconectar Drive."); return; }
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setFolders(data.folders || []);
-      setVideos(data.videos   || []);
+      const folders = data.folders || [];
+      const videos  = data.videos  || [];
+      cacheRef.current[folderId] = { folders, videos }; // salva no cache
+      setFolders(folders);
+      setVideos(videos);
       setSelected(new Set());
     } catch (err) {
       if (err.message==="not_connected"||err.message==="token_expired") return;
@@ -272,7 +284,7 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"rgba(34,197,94,0.12)",color:"var(--success)",border:"1px solid rgba(34,197,94,0.25)",whiteSpace:"nowrap"}}>✓ Drive conectado</span>
-            <button onClick={()=>load(current.id)} className="btn btn-ghost btn-sm" style={{padding:"4px 8px"}} title="Recarregar">↻</button>
+            <button onClick={()=>load(current.id, true)} className="btn btn-ghost btn-sm" style={{padding:"4px 8px"}} title="Recarregar">↻</button>
             <button onClick={drive.disconnect} className="btn btn-ghost btn-sm" style={{padding:"4px 8px",color:"var(--muted)",fontSize:11}} title="Desconectar Drive">✕</button>
           </div>
         </div>
@@ -295,7 +307,7 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
           {error && (
             <div style={{padding:16,background:"rgba(239,68,68,0.1)",borderRadius:8,color:"var(--danger)",fontSize:13,marginBottom:8}}>
               <strong>Erro:</strong> {error}
-              <button onClick={()=>load(current.id)} style={{marginLeft:12,fontSize:12,color:"var(--accent)",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Tentar novamente</button>
+              <button onClick={()=>load(current.id, true)} style={{marginLeft:12,fontSize:12,color:"var(--accent)",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Tentar novamente</button>
             </div>
           )}
 

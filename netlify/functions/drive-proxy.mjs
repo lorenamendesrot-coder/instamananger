@@ -254,30 +254,39 @@ export default async function handler(req) {
       const accessToken           = await renewAccessToken(refresh_token);
       const { buffer, sizeBytes } = await downloadFromDrive(file_id, accessToken);
 
-      // Sanitiza o MP4: limpa metadados, altera timestamps, injeta ruído único
-      // Cada conta recebe uma versão com hash diferente do mesmo vídeo
-      const sanitized    = sanitizeMP4(buffer, account_id || file_id + Date.now());
-      const sanitizedArr = new Uint8Array(sanitized);
+      // Sanitização: apenas quando account_id é fornecido (chamada do scheduler)
+      // No upload manual (DrivePicker) não há account_id — pula sanitização para
+      // evitar timeout de 26s do Netlify. A sanitização ocorre na publicação.
+      let finalArr;
+      let sanitizedFlag = false;
+      if (account_id) {
+        const sanitized = sanitizeMP4(buffer, account_id);
+        finalArr        = new Uint8Array(sanitized);
+        sanitizedFlag   = true;
+        console.log(`[drive-proxy] sanitizado para conta ${account_id}`);
+      } else {
+        finalArr = new Uint8Array(buffer);
+      }
 
-      const store = getVideoStore();
-      // blob_key único por conta — garante versão diferente para cada uma
-      const blobKey  = account_id
+      const store   = getVideoStore();
+      const blobKey = account_id
         ? `video-${file_id}-${account_id}`
         : `video-${file_id}-${Date.now()}`;
 
-      await store.set(blobKey, sanitizedArr, {
+      await store.set(blobKey, finalArr, {
         metadata: {
-          file_name:    file_name || file_id,
-          uploaded_at:  new Date().toISOString(),
-          size:         String(sanitizedArr.byteLength),
-          account_id:   account_id || "",
-          sanitized:    "true",
+          file_name:   file_name || file_id,
+          uploaded_at: new Date().toISOString(),
+          size:        String(finalArr.byteLength),
+          account_id:  account_id || "",
+          sanitized:   String(sanitizedFlag),
+          file_id:     file_id, // guarda para sanitizar na publicação
         },
       });
 
       const proxyUrl = `${SITE_URL}/.netlify/functions/drive-proxy?key=${blobKey}`;
-      console.log(`[drive-proxy] OK ${file_name || file_id} (${(sanitizedArr.byteLength / 1e6).toFixed(1)}MB) conta:${account_id || "n/a"} -> ${proxyUrl}`);
-      return json({ url: proxyUrl, blob_key: blobKey, size: sanitizedArr.byteLength });
+      console.log(`[drive-proxy] OK ${file_name || file_id} (${(finalArr.byteLength / 1e6).toFixed(1)}MB) conta:${account_id || "n/a"} -> ${proxyUrl}`);
+      return json({ url: proxyUrl, blob_key: blobKey, size: finalArr.byteLength, file_id, sanitized: sanitizedFlag });
 
     } catch (err) {
       console.error("[drive-proxy] POST erro:", err.message);
