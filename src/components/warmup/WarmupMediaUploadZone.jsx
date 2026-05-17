@@ -55,8 +55,8 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
     try { localStorage.setItem(IMPORT_KEY, JSON.stringify(s)); } catch {}
   }
   function setImportDone() {
-    setDriveImportState(null);
     try { localStorage.removeItem(IMPORT_KEY); } catch {}
+    setDriveImportState(null);
   }
   function setImportError(msg) {
     const s = { active: false, error: msg };
@@ -196,34 +196,39 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
                     const CONCURRENCY = 5;
                     const urls = new Array(pickedVideos.length).fill(null);
                     let completed = 0;
+                    let currentName = null;
 
-                    // Processa em lotes de CONCURRENCY simultâneos
-                    for (let batch = 0; batch < pickedVideos.length; batch += CONCURRENCY) {
-                      const slice = pickedVideos.slice(batch, batch + CONCURRENCY);
-                      setImportProgress(completed, pickedVideos.length, slice.map(v => v.name).join(", "));
+                    // Fila de tarefas — cada worker pega um arquivo, processa e atualiza progresso
+                    const queue = pickedVideos.map((v, idx) => ({ v, idx }));
+                    let queuePos = 0;
 
-                      const results = await Promise.all(
-                        slice.map(async (v, sliceIdx) => {
-                          const globalIdx = batch + sliceIdx;
-                          const res  = await fetch("/api/drive-proxy", {
-                            method:  "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body:    JSON.stringify({ file_id: v.id, file_name: v.name, refresh_token }),
-                          });
-                          const data = await res.json();
-                          if (!res.ok) throw new Error(data.error || `Erro ao importar "${v.name}"`);
-                          return { idx: globalIdx, url: data.url };
-                        })
-                      );
-
-                      for (const r of results) urls[r.idx] = r.url;
-                      completed += slice.length;
-                      setImportProgress(completed, pickedVideos.length, null);
+                    async function worker() {
+                      while (true) {
+                        const task = queue[queuePos++];
+                        if (!task) break;
+                        const { v, idx } = task;
+                        currentName = v.name;
+                        setImportProgress(completed, pickedVideos.length, currentName);
+                        const res  = await fetch("/api/drive-proxy", {
+                          method:  "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body:    JSON.stringify({ file_id: v.id, file_name: v.name, refresh_token }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || `Erro ao importar "${v.name}"`);
+                        urls[idx] = data.url;
+                        completed++;
+                        if (completed >= pickedVideos.length) {
+                          const validUrls = urls.filter(Boolean);
+                          if (validUrls.length) onAddUrl(typeConfig.id, validUrls);
+                          setImportDone();
+                        } else {
+                          setImportProgress(completed, pickedVideos.length, currentName);
+                        }
+                      }
                     }
 
-                    const validUrls = urls.filter(Boolean);
-                    if (validUrls.length) onAddUrl(typeConfig.id, validUrls);
-                    setImportDone();
+                    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
                   } catch (err) {
                     setImportError(err.message);
                   }
