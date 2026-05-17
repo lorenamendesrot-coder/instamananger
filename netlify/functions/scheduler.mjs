@@ -346,6 +346,7 @@ async function processPerAccount(store, item) {
         success:      true,
         media_id:     result.media_id,
         published_at: result.published_at,
+        sanitized:    !!(item.driveFileId && item.driveRefreshToken),
       });
       return;
     }
