@@ -1,5 +1,5 @@
 // WarmupMediaUploadZone.jsx — mídias por URL ou Google Drive
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import DrivePicker from "../DrivePicker.jsx";
 import { useDriveAuth } from "../../useDriveAuth.js";
 
