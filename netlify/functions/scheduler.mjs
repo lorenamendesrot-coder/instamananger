@@ -211,15 +211,15 @@ async function pushResultToParent(store, historyId, result) {
       const updated = {
         ...parent,
         results: newResults,
-        ...(allDone && !parent.loop ? {
+        ...(allDone ? {
           status:      "posted",
           completedAt: new Date().toISOString(),
           finishedAt:  new Date().toISOString(),
         } : {}),
       };
 
-      if (allDone && !parent.loop) {
-        console.log(`[scheduler] ✅ item pai ${parent.id} concluído — ${newResults.filter(r => r.success).length}/${newResults.length} conta(s) publicadas`);
+      if (allDone) {
+        console.log(`[scheduler] ✅ item pai ${parent.id} concluído — ${newResults.filter(r => r.success).length}/${newResults.length} conta(s) publicadas${parent.loop ? " (loop — aguardando próximo ciclo)" : ""}`);
       }
 
       return queue.map((x) => x.id === parent.id ? updated : x);
@@ -540,7 +540,7 @@ export default async function handler(request) {
   }
 
   // Itens pendentes vencidos por tipo — ordenados por scheduledAt para respeitar a ordem cronológica
-  const dueNormal     = queue.filter((x) => !x.type && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
+  const dueNormal     = queue.filter((x) => !x.type && (x.status === "pending" || (x.status === "posted" && x.loop)) && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
   const duePerAccount = queue.filter((x) => x.type === "per_account" && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
   const dueFinish     = queue.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
 

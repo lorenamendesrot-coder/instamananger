@@ -544,6 +544,16 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   else if (effectiveStatus === "done")    statusLabel = "Publicado";
   else if (effectiveStatus === "error")   statusLabel = "Erro";
   else if (effectiveStatus === "running") statusLabel = "Rodando";
+  else if (item.status === "posted" && item.loop) {
+    const nextMs = item.scheduledAt - Date.now();
+    if (nextMs > 0) {
+      const h = Math.floor(nextMs / 3600000);
+      const m = Math.floor((nextMs % 3600000) / 60000);
+      statusLabel = h > 0 ? `✅ Postado — próximo em ${h}h${m > 0 ? m + "min" : ""}` : `✅ Postado — próximo em ${m}min`;
+    } else {
+      statusLabel = "✅ Postado com Sucesso!";
+    }
+  }
   else if (item.runCount > 0)  statusLabel = "Próximo ciclo";
   else if (isPast)             statusLabel = "Atrasado";
 
