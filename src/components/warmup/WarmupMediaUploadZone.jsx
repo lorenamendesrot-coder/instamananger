@@ -202,6 +202,22 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
                     const queue = pickedVideos.map((v, idx) => ({ v, idx }));
                     let queuePos = 0;
 
+                    // Polling do job até concluir (background function — sem timeout)
+                    async function waitForJob(jobId, fileName) {
+                      const INTERVAL = 2000;
+                      const MAX_WAIT = 900000; // 15 minutos
+                      const started  = Date.now();
+                      while (Date.now() - started < MAX_WAIT) {
+                        await new Promise(r => setTimeout(r, INTERVAL));
+                        const poll = await fetch(`/api/drive-proxy-bg?job_id=${jobId}`);
+                        const data = await poll.json();
+                        if (data.status === "done")  return data.url;
+                        if (data.status === "error") throw new Error(data.error || `Falha ao importar "${fileName}"`);
+                        // status "running" ou "pending" — continua polling
+                      }
+                      throw new Error(`Timeout ao importar "${fileName}" — tente novamente`);
+                    }
+
                     async function worker() {
                       while (true) {
                         const task = queue[queuePos++];
@@ -209,14 +225,19 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
                         const { v, idx } = task;
                         currentName = v.name;
                         setImportProgress(completed, pickedVideos.length, currentName);
-                        const res  = await fetch("/api/drive-proxy", {
+
+                        // Dispara o job (retorna imediatamente com job_id)
+                        const res  = await fetch("/api/drive-proxy-bg", {
                           method:  "POST",
                           headers: { "Content-Type": "application/json" },
                           body:    JSON.stringify({ file_id: v.id, file_name: v.name, refresh_token }),
                         });
                         const data = await res.json();
                         if (!res.ok) throw new Error(data.error || `Erro ao importar "${v.name}"`);
-                        urls[idx] = data.url;
+
+                        // Aguarda o job terminar via polling
+                        const url = await waitForJob(data.job_id, v.name);
+                        urls[idx] = url;
                         completed++;
                         if (completed >= pickedVideos.length) {
                           const validUrls = urls.filter(Boolean);
