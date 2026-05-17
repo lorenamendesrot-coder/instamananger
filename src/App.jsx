@@ -174,6 +174,10 @@ function SchedulerProvider({ addEntry, children }) {
     detectCron().catch(() => {});
     const cronCheck = setInterval(() => detectCron().catch(() => {}), 5 * 60 * 1000);
 
+    // Recarrega fila imediatamente ao voltar para a aba (cron serverless pode ter atualizado)
+    const onVisible = () => { if (document.visibilityState === "visible") reload(); };
+    document.addEventListener("visibilitychange", onVisible);
+
     // Reseta itens running travados
     const resetStuck = async () => {
       const all = await qApi.getAll();
@@ -325,9 +329,15 @@ function SchedulerProvider({ addEntry, children }) {
       }
     };
 
-    const iv = setInterval(tick, 10000);
-    tick();
-    return () => { clearInterval(iv); clearInterval(cronCheck); };
+    // Poll adaptativo: 3s quando há itens rodando, 12s caso contrário
+    let ivTimeout;
+    const scheduleTick = async () => {
+      await tick();
+      const hasRunning = queue.some(x => x.status === "running" || x.status === "done");
+      ivTimeout = setTimeout(scheduleTick, hasRunning ? 3000 : 12000);
+    };
+    scheduleTick();
+    return () => { clearTimeout(ivTimeout); clearInterval(cronCheck); document.removeEventListener("visibilitychange", onVisible); };
   }, [addEntry, reload]);
 
   const addBatch = async (items) => {
