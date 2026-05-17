@@ -498,7 +498,7 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   const hasActivePa = paItems?.some(p => p.status === "pending" || p.status === "running");
   const allPaDone   = paTotal > 0 && paDone >= paTotal;
 
-  const isPublishing    = (item.status === "done" || item.status === "posted" || item.status === "running") && (hasActiveVf || hasActivePa) && !allPaDone;
+  const isPublishing    = (item.status === "done" || item.status === "running") && (hasActiveVf || hasActivePa) && !allPaDone;
   const effectiveStatus = isPublishing ? "running" : item.status;
   // isPast: horário passou, ainda pending, nunca rodou — badge laranja
   const isOverdue = item.status === "pending" && item.scheduledAt < Date.now() && !item.runCount && (item.results || []).length === 0;

@@ -208,9 +208,16 @@ async function pushResultToParent(store, historyId, result) {
       );
 
       const allDone = pendingChildren.length === 0;
+      let loopNext = {};
+      if (allDone && parent.loop) {
+        const HOUR_MS = 3600 * 1000;
+        const JITTER  = Math.floor(Math.random() * 360 - 180) * 1000;
+        loopNext = { scheduledAt: parent.scheduledAt + HOUR_MS + JITTER };
+      }
       const updated = {
         ...parent,
         results: newResults,
+        ...loopNext,
         ...(allDone ? {
           status:      "posted",
           completedAt: new Date().toISOString(),
@@ -219,7 +226,7 @@ async function pushResultToParent(store, historyId, result) {
       };
 
       if (allDone) {
-        console.log(`[scheduler] ✅ item pai ${parent.id} concluído — ${newResults.filter(r => r.success).length}/${newResults.length} conta(s) publicadas${parent.loop ? " (loop — aguardando próximo ciclo)" : ""}`);
+        console.log(`[scheduler] ✅ item pai ${parent.id} concluído — ${newResults.filter(r => r.success).length}/${newResults.length} conta(s) publicadas${parent.loop ? " (loop — próximo em " + new Date(updated.scheduledAt).toLocaleTimeString("pt-BR") + ")" : ""}`);
       }
 
       return queue.map((x) => x.id === parent.id ? updated : x);
@@ -476,17 +483,14 @@ async function processItem(store, item) {
   // Loop: reagenda o grupo para daqui a 1h (depois que todos sub-itens terminarem)
   // A checagem de conclusão acontece no pushResultToParent.
   if (item.loop) {
-    const HOUR_MS = 3600 * 1000;
-    const JITTER  = Math.floor(Math.random() * 360 - 180) * 1000;
-    // O item pai é atualizado novamente para loop após todos sub-itens concluírem
-    // Aqui apenas registramos o próximo scheduledAt no grupo
+    // Apenas marca como running — o scheduledAt será avançado pelo pushResultToParent
+    // após confirmar que todos os sub-itens publicaram com sucesso
     await queueUpdate(store, {
       ...item,
-      type:        "group",
+      type:          "group",
       historyId,
-      status:      "running",
-      scheduledAt: item.scheduledAt + HOUR_MS + JITTER,
-      runCount:    (item.runCount || 0) + 1,
+      status:        "running",
+      runCount:      (item.runCount || 0) + 1,
       totalAccounts: total * urlsToPost.length,
     });
   }
