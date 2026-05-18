@@ -233,7 +233,7 @@ function PasswordCell({ value, onChange }) {
   );
 }
 
-/** Célula TOTP: chave editável + código ao vivo + copiar + barra de tempo */
+/** Célula TOTP: chave editável + código ao vivo compacto */
 function TOTPCell({ secret, onChange }) {
   const [code,     setCode]     = useState(null);
   const [secsLeft, setSecsLeft] = useState(totpSecondsLeft());
@@ -241,7 +241,6 @@ function TOTPCell({ secret, onChange }) {
   const [expanded, setExpanded] = useState(false);
   const intervalRef = useRef(null);
 
-  // Gera código e agenda próxima atualização
   const refresh = useCallback(async (currentSecret) => {
     if (!currentSecret) { setCode(null); return; }
     const c = await generateTOTP(currentSecret);
@@ -266,12 +265,12 @@ function TOTPCell({ secret, onChange }) {
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const urgency = secsLeft <= 5 ? "#ef4444" : secsLeft <= 10 ? "#f59e0b" : "#22c55e";
+  const urgency = secsLeft <= 7 ? "#ef4444" : secsLeft <= 15 ? "#f59e0b" : "#22c55e";
   const pct     = (secsLeft / 30) * 100;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5, width: "100%" }}>
-      {/* Linha do input + badge copiar chave */}
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
+      {/* Linha 1: input da chave + revelar + copiar chave */}
       <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
         <input
           type={expanded ? "text" : "password"}
@@ -287,41 +286,42 @@ function TOTPCell({ secret, onChange }) {
         <CopyBadge text={secret} title="Copiar chave 2FA" />
       </div>
 
-      {/* Código TOTP ao vivo */}
+      {/* Linha 2: código + barra + contador + botão copiar — tudo inline e compacto */}
       {secret && (
         <div style={{
-          display: "flex", alignItems: "center", gap: 8,
-          background: "rgba(0,0,0,0.25)", borderRadius: 8,
-          padding: "6px 10px", border: "1px solid rgba(255,255,255,0.07)",
+          display: "flex", alignItems: "center", gap: 6,
+          background: "rgba(0,0,0,0.2)", borderRadius: 6,
+          padding: "4px 8px", border: "1px solid rgba(255,255,255,0.06)",
         }}>
           {code ? (
             <>
-              {/* Código formatado XXX XXX */}
+              {/* Código XXX XXX */}
               <span style={{
-                fontFamily: "monospace", fontSize: 18, fontWeight: 800,
-                letterSpacing: 3, color: urgency, userSelect: "all",
+                fontFamily: "monospace", fontSize: 14, fontWeight: 800,
+                letterSpacing: 2, color: urgency, userSelect: "all", flexShrink: 0,
               }}>
                 {code.slice(0, 3)} {code.slice(3)}
               </span>
 
-              {/* Contador + barra */}
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: urgency, lineHeight: 1 }}>{secsLeft}s</span>
-                <div style={{ width: 28, height: 4, background: "rgba(255,255,255,0.1)", borderRadius: 2, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${pct}%`, background: urgency, borderRadius: 2, transition: "width 1s linear, background 0.3s" }} />
-                </div>
+              {/* Barra de progresso fina */}
+              <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.1)", borderRadius: 2, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${pct}%`, background: urgency, borderRadius: 2, transition: "width 1s linear, background 0.3s" }} />
               </div>
 
-              {/* Botão copiar código */}
+              {/* Contador colorido */}
+              <span style={{ fontSize: 11, fontWeight: 700, color: urgency, flexShrink: 0, minWidth: 22, textAlign: "right" }}>
+                {secsLeft}s
+              </span>
+
+              {/* Botão copiar — só ícone */}
               <button onClick={handleCopyCode} title="Copiar código TOTP" style={{
-                marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4,
-                background: copied ? "rgba(34,197,94,0.2)" : "rgba(255,255,255,0.08)",
-                border: `1px solid ${copied ? "rgba(34,197,94,0.5)" : "rgba(255,255,255,0.15)"}`,
-                borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700,
-                color: copied ? "#22c55e" : "var(--text)",
-                cursor: "pointer", transition: "all 0.15s", whiteSpace: "nowrap",
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                background: copied ? "rgba(34,197,94,0.2)" : "rgba(255,255,255,0.07)",
+                border: `1px solid ${copied ? "rgba(34,197,94,0.5)" : "rgba(255,255,255,0.12)"}`,
+                borderRadius: 5, width: 24, height: 24, fontSize: 13,
+                cursor: "pointer", transition: "all 0.15s", flexShrink: 0,
               }}>
-                {copied ? "✓ Copiado!" : "📋 Copiar código"}
+                {copied ? "✓" : "📋"}
               </button>
             </>
           ) : (
