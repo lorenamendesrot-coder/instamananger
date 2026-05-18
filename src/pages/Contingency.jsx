@@ -594,7 +594,7 @@ export default function Contingency() {
       const current = driveStack[driveStack.length - 1];
       loadDriveFolder(current.id);
     }
-  }, [drivePickerOpen, driveStack, drive.isConnected, loadDriveFolder]);
+  }, [drivePickerOpen, driveStack, drive.status, loadDriveFolder]);
 
   const handleImportFromDrive = useCallback(async (csvFile) => {
     setDrivePickerOpen(false);
@@ -722,11 +722,20 @@ export default function Contingency() {
             <button className="btn btn-primary btn-sm" onClick={() => fileInputRef.current?.click()} disabled={importing}>
               {importing ? <><span className="spinner" style={{ width:11,height:11,borderTopColor:"#fff" }} /> Importando...</> : isMobile ? "📥 CSV" : "📥 Importar CSV"}
             </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setDrivePickerOpen(true)} disabled={importing}>
-              {isMobile ? "📂" : "📂 Drive"}
+            <button className="btn btn-ghost btn-sm" onClick={() => setDrivePickerOpen(true)} disabled={importing}
+              style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
+              <svg width="16" height="14" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
+                <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+                <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
+                <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
+                <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+                <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+                <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+              </svg>
+              {!isMobile && "Drive"}
             </button>
             <button className="btn btn-ghost btn-sm" onClick={handleExport} disabled={!filtered.length}>{isMobile ? "📤" : "📤 Exportar CSV"}</button>
-            <input ref={fileInputRef} type="file" accept=".csv,text/csv,text/plain,application/csv" style={{ display:"none" }} onChange={handleFileChange} />
+            <input ref={fileInputRef} type="file" accept=".csv,.txt,.tsv" style={{ display:"none" }} onChange={handleFileChange} />
           </div>
         </div>
       </div>
@@ -841,14 +850,14 @@ export default function Contingency() {
 
             {/* Body */}
             <div style={{ flex:1, overflowY:"auto", padding:"12px 16px" }}>
-              {/* Não conectado */}
+              {/* Não conectado (idle ou conectando) */}
               {!drive.isConnected && !drive.isExpired && (
                 <div style={{ textAlign:"center", padding:"32px 16px" }}>
                   <div style={{ fontSize:40, marginBottom:12 }}>📂</div>
                   <div style={{ fontWeight:600, marginBottom:8 }}>Conecte o Google Drive</div>
                   <div style={{ fontSize:12, color:"var(--muted)", marginBottom:16 }}>Para importar CSVs diretamente do seu Drive.</div>
-                  <button onClick={drive.connect} className="btn btn-primary">
-                    {drive.isConnecting ? "Aguardando login..." : "🔑 Entrar com Google"}
+                  <button onClick={drive.connect} className="btn btn-primary" disabled={drive.isConnecting}>
+                    {drive.isConnecting ? <><span className="spinner" style={{ width:12, height:12, borderTopColor:"#fff" }} /> Aguardando login...</> : "🔑 Entrar com Google"}
                   </button>
                 </div>
               )}
