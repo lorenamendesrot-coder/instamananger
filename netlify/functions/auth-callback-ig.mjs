@@ -14,6 +14,9 @@
 const IG_AUTH  = "https://api.instagram.com";
 const IG_GRAPH = "https://graph.instagram.com";
 
+// Campos suportados pelo Instagram Business Login (ig_biz_login_oauth).
+// account_type NÃO é suportado neste fluxo — causa "Unsupported request - method type: get"
+// Ref: https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/get-started
 const IG_FIELDS = [
   "id",
   "username",
@@ -24,7 +27,6 @@ const IG_FIELDS = [
   "followers_count",
   "follows_count",
   "media_count",
-  "account_type",
 ].join(",");
 
 async function apiFetch(url, options = {}) {

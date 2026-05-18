@@ -37,13 +37,16 @@ export const handler = async (event) => {
       try { acc = await store.get(key, { type: "json" }); } catch { continue; }
       if (!acc?.id || !acc?.access_token) continue;
 
+      // account_type não é suportado pelo Instagram Business Login (ig_biz_login_oauth)
       const fields = [
         "id", "username", "name", "biography", "website",
-        "profile_picture_url", "account_type",
+        "profile_picture_url",
         "followers_count", "follows_count", "media_count",
       ].join(",");
 
-      const res  = await fetch(`${GRAPH}/${acc.id}?fields=${fields}&access_token=${acc.access_token}`);
+      // Suporta token_app2 (contas conectadas via App 2)
+      const token = acc.access_token || acc.token_app2;
+      const res  = await fetch(`${GRAPH}/${acc.id}?fields=${fields}&access_token=${token}`);
       const data = await res.json();
 
       if (data.error) {
