@@ -571,7 +571,7 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
     }
   }
   else if (item.runCount > 0)  statusLabel = "Próximo ciclo";
-  else if (isPast)             statusLabel = "Atrasado";
+  else if (isOverdue)          statusLabel = "Atrasado";
 
   const isPosted = effectiveStatus === "posted";
 
@@ -626,9 +626,9 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
 
           {/* Horário + ações — lado direito */}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-            <span style={{ fontSize: 11, fontWeight: isPast ? 700 : 500, color: isPast ? "var(--warning)" : "var(--muted)", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: isOverdue ? 700 : 500, color: isOverdue ? "var(--warning)" : "var(--muted)", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
               🕐 {scheduledDate.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
-              {isPast && <span style={{ color: "var(--warning)", fontSize: 13 }}>⚠</span>}
+              {isOverdue && <span style={{ color: "var(--warning)", fontSize: 13 }}>⚠</span>}
             </span>
 
             {(item.status === "pending" || item.status === "error") && (
