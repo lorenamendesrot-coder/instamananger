@@ -38,7 +38,9 @@ async function checkContainer(creationId, token) {
       // FIX: retorna o erro real da API em vez de mensagem genérica
       if (d.error) {
         console.error(`[publish-finish] API error para container ${creationId}:`, d.error);
-        return { ready: false, expired: true, error: `${d.error.message} (code ${d.error.code})` };
+        // CRÍTICO: passar errorCode para o SW detectar rate limit (code 4) e reagendar
+        // Sem isso, isRateLimit no SW fica false e a conta é abandonada em vez de reagendada
+        return { ready: false, expired: true, error: `${d.error.message} (code ${d.error.code})`, errorCode: d.error.code };
       }
 
       console.log(`[publish-finish] container ${creationId} — status_code: ${d.status_code}, status: ${d.status || "n/a"} (check ${i + 1}/3)`);
@@ -133,7 +135,7 @@ export const handler = async (event) => {
       }
 
       if (check.expired || (!check.ready && check.error)) {
-        return { account_id, username: item.username || account?.username, success: false, error: check.error };
+        return { account_id, username: item.username || account?.username, success: false, error: check.error, errorCode: check.errorCode };
       }
 
       if (check.ready) {

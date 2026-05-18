@@ -258,8 +258,9 @@ async function runVideoFinishGroup(items) {
         const attempts    = (item.attempts || 0) + 1;
 
         if (isRateLimit && attempts < item.maxAttempts) {
-          // Backoff exponencial: 5min, 10min, 20min...
-          const retryDelay = Math.min(5 * 60 * 1000 * Math.pow(2, attempts - 1), 30 * 60 * 1000);
+          // Backoff exponencial: 15min, 30min, 30min...
+          // Era 5min/10min/20min — muito agressivo, esgotava a quota novamente
+          const retryDelay = Math.min(15 * 60 * 1000 * Math.pow(2, attempts - 1), 30 * 60 * 1000);
           console.warn(`[SW] video_finish rate limit @${item.username} retry em ${Math.round(retryDelay/60000)}min (${attempts}/${item.maxAttempts})`);
           await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + retryDelay, lastError: errMsg });
           continue;
