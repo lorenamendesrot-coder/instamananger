@@ -82,30 +82,52 @@ export const handler = async (event) => {
       throw new Error(`Token curto falhou: ${shortRes.error_message || shortRes.error_type || JSON.stringify(shortRes)}`);
     }
 
-    // ── 2. Trocar por token longo (60 dias) ───────────────────────────────
-    // NOTA: A API do Instagram exige POST (não GET) para ig_exchange_token
-    const longRes = await apiFetch(`${IG_GRAPH}/access_token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type:    "ig_exchange_token",
-        client_secret: APP_SECRET,
-        access_token:  shortToken,
-      }),
-    });
+    // ── 2. Trocar por token longo via graph.facebook.com ────────────────
+    // O Instagram Business Login (www.instagram.com/oauth/authorize) emite
+    // tokens que são trocados por fb_exchange_token no graph.facebook.com,
+    // e NÃO pelo ig_exchange_token em graph.instagram.com (que é o fluxo antigo).
+    let longToken = shortToken;
+    let expiresAt = null;
+
+    const longRes = await apiFetch(
+      `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${APP_ID}&client_secret=${APP_SECRET}&fb_exchange_token=${shortToken}`
+    );
 
     console.log("[auth-callback-ig] long token response:", JSON.stringify(longRes));
 
-    const longToken = longRes.access_token || shortToken;
-    const expiresIn = longRes.expires_in   || null;
-    const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+    if (longRes.access_token) {
+      longToken  = longRes.access_token;
+      const expiresIn = longRes.expires_in || null;
+      expiresAt  = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+    } else {
+      // Continua com token curto se a troca falhar
+      console.log("[auth-callback-ig] token longo nao obtido, usando token curto");
+    }
 
     // ── 3. Buscar perfil ──────────────────────────────────────────────────
-    const profile = await apiFetch(
+    // Tenta graph.instagram.com primeiro; se falhar, tenta via graph.facebook.com
+    let profile = await apiFetch(
       `${IG_GRAPH}/me?fields=${IG_FIELDS}&access_token=${longToken}`
     );
 
-    console.log("[auth-callback-ig] profile response:", JSON.stringify(profile));
+    console.log("[auth-callback-ig] profile response (ig):", JSON.stringify(profile));
+
+    if (profile.error) {
+      // Fallback: busca a conta IG vinculada via Facebook Graph
+      console.log("[auth-callback-ig] tentando perfil via graph.facebook.com");
+      const fbMe = await apiFetch(
+        `https://graph.facebook.com/v21.0/me?fields=instagram_business_account&access_token=${longToken}`
+      );
+      console.log("[auth-callback-ig] fb me response:", JSON.stringify(fbMe));
+
+      const igId = fbMe?.instagram_business_account?.id;
+      if (igId) {
+        profile = await apiFetch(
+          `https://graph.facebook.com/v21.0/${igId}?fields=${IG_FIELDS}&access_token=${longToken}`
+        );
+        console.log("[auth-callback-ig] profile response (fb):", JSON.stringify(profile));
+      }
+    }
 
     if (profile.error) {
       throw new Error(`Perfil: ${profile.error.message} (code: ${profile.error.code})`);
