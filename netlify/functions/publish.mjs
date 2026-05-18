@@ -8,8 +8,10 @@ function graph(t)    { return isIGToken(t) ? GRAPH_IG : GRAPH_FB; }
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
 // ─── Conversão de URL do Google Drive ────────────────────────────────────────
-function resolveGoogleDriveUrl(url) {
-  if (!url || !url.includes("drive.google.com")) return url;
+
+/** Extrai o fileId e monta a URL de download direto. Retorna { fileId, direct } ou null. */
+function parseGoogleDriveUrl(url) {
+  if (!url || !url.includes("drive.google.com")) return null;
 
   let fileId = null;
 
@@ -21,16 +23,98 @@ function resolveGoogleDriveUrl(url) {
     if (idMatch) fileId = idMatch[1];
   }
 
-  if (!fileId) {
-    console.warn("[publish] Link do Google Drive não reconhecido, usando como está:", url);
-    return url;
-  }
+  if (!fileId) return null;
 
   // "confirm=t" bypassa a tela de confirmação de antivírus do Google Drive
   // que bloqueia downloads de arquivos grandes (vídeos) sem interação humana.
   // Sem esse parâmetro, o Instagram recebe uma página HTML em vez do vídeo.
   const direct = `https://drive.google.com/uc?export=download&confirm=t&id=${fileId}`;
+  return { fileId, direct };
+}
+
+/**
+ * Converte URL do Drive e valida acessibilidade via HEAD request.
+ * Lança erro imediatamente se o arquivo não for acessível publicamente,
+ * evitando a falha silenciosa ~20 min depois no processamento do Instagram.
+ *
+ * @param {string} url  URL original (Drive ou qualquer outra)
+ * @returns {Promise<string>}  URL resolvida e validada
+ * @throws {Error}  Se o Drive retornar 403/404 ou não for um tipo de mídia aceito
+ */
+async function resolveGoogleDriveUrl(url) {
+  if (!url || !url.includes("drive.google.com")) return url;
+
+  const parsed = parseGoogleDriveUrl(url);
+
+  if (!parsed) {
+    console.warn("[publish] Link do Google Drive não reconhecido, usando como está:", url);
+    return url;
+  }
+
+  const { fileId, direct } = parsed;
   console.log(`[publish] Google Drive convertido: ${fileId} -> ${direct}`);
+
+  // ── Validação prévia via HEAD ──────────────────────────────────────────────
+  // O Instagram só descobre que o arquivo é inacessível ~20 min depois.
+  // Fazemos um HEAD aqui para falhar rápido e dar feedback útil ao usuário.
+  try {
+    const headRes = await fetch(direct, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: AbortSignal.timeout(10_000), // 10 s — Drive pode redirecionar
+    });
+
+    const status      = headRes.status;
+    const contentType = headRes.headers.get("content-type") || "";
+
+    if (status === 401 || status === 403) {
+      throw new Error(
+        `Arquivo do Google Drive não está acessível publicamente (HTTP ${status}). ` +
+        `Verifique se a permissão está como "Qualquer pessoa com o link pode ver".`
+      );
+    }
+
+    if (status === 404) {
+      throw new Error(
+        `Arquivo do Google Drive não encontrado (HTTP 404). ` +
+        `Confirme que o link está correto e que o arquivo não foi removido.`
+      );
+    }
+
+    if (status >= 400) {
+      throw new Error(
+        `Google Drive retornou erro inesperado (HTTP ${status}). ` +
+        `Tente novamente ou use outro serviço de hospedagem.`
+      );
+    }
+
+    // Se o Drive retornar HTML, é a página de "confirmação de vírus" ou login —
+    // o Instagram vai receber HTML em vez do vídeo e falhar silenciosamente.
+    if (contentType.includes("text/html")) {
+      throw new Error(
+        `Google Drive retornou uma página HTML em vez do arquivo de mídia. ` +
+        `Isso geralmente indica: 1) Permissão restrita (arquivo não público); ` +
+        `2) Tela de confirmação de antivírus para arquivos grandes. ` +
+        `Tente baixar e re-hospedar o arquivo em um serviço como Cloudinary ou S3.`
+      );
+    }
+
+    console.log(
+      `[publish] Drive validado: HTTP ${status}, Content-Type: ${contentType || "(não informado)"}`
+    );
+  } catch (err) {
+    // Timeout de rede
+    if (err.name === "TimeoutError") {
+      throw new Error(
+        `Google Drive demorou mais de 10 s para responder ao HEAD request. ` +
+        `O Instagram pode não conseguir baixar o arquivo. ` +
+        `Verifique a URL ou re-hospede a mídia.`
+      );
+    }
+    // Re-lança erros de validação lançados acima
+    throw err;
+  }
+
   return direct;
 }
 
@@ -134,7 +218,12 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
   const token = account.access_token;
   if (!token) return { success: false, error: "Token nao encontrado. Reconecte a conta." };
 
-  const resolved_url = resolveGoogleDriveUrl(media_url);
+  let resolved_url;
+  try {
+    resolved_url = await resolveGoogleDriveUrl(media_url);
+  } catch (driveErr) {
+    return { success: false, error: driveErr.message };
+  }
 
   const isVideo = media_type === "VIDEO";
   let payload = { access_token: token };
