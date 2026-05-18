@@ -38,44 +38,63 @@ function json(data, status = 200, req = null) {
   return new Response(JSON.stringify(data), { status, headers: corsHeaders(req) });
 }
 
-// ─── Lock otimista ────────────────────────────────────────────────────────────
-// O blob guarda { etag, items } em vez de só o array.
-// etag é um timestamp gerado a cada escrita.
-// Se ao gravar o etag lido for diferente do atual, outra instância
-// escreveu antes — tenta de novo com backoff (até MAX_RETRIES vezes).
+// ─── Lock otimista com ETag HTTP real ────────────────────────────────────────
+//
+// Usamos o ETag HTTP que o Netlify Blobs retorna via getWithMetadata().
+// Ao escrever com store.setJSON(key, value, { etag }), o servidor rejeita
+// com 412 Precondition Failed se outro processo já escreveu desde a leitura.
+// Isso garante exclusão mútua real entre scheduler e frontend, sem a dupla
+// leitura do etag caseiro (que criava uma janela de race condition entre
+// o "readWithEtag" de verificação e o "setJSON" dentro do writeWithLock).
+//
+// O blob agora guarda apenas { items } — o campo "etag" foi removido do JSON.
+// Blobs antigos no formato { etag, items } são tratados de forma compatível.
 
 const MAX_RETRIES = 5;
 const BASE_DELAY  = 80; // ms
 
 async function readWithEtag(store) {
   try {
-    const data = await store.get(BLOB_KEY, { type: "json" });
-    if (data && Array.isArray(data.items)) {
-      return { items: data.items, etag: data.etag || null };
-    }
+    // getWithMetadata retorna { data, etag, metadata } ou null se não existir.
+    const result = await store.getWithMetadata(BLOB_KEY, { type: "json" });
+    if (!result) return { items: [], etag: null };
+
+    const { data, etag } = result;
+    if (data && Array.isArray(data.items)) return { items: data.items, etag: etag || null };
     // Compatibilidade: blob antigo era só o array
-    if (Array.isArray(data)) {
-      return { items: data, etag: null };
-    }
-    return { items: [], etag: null };
+    if (Array.isArray(data))               return { items: data,       etag: etag || null };
+    return { items: [], etag: etag || null };
   } catch {
     return { items: [], etag: null };
   }
 }
 
 async function writeWithLock(store, etag, items) {
-  // Verifica se o etag ainda é o mesmo antes de gravar
-  const current = await readWithEtag(store);
-  if (etag !== null && current.etag !== etag) {
-    throw new Error("etag_mismatch");
+  // store.set() aceita { etag } como opção para conditional write (If-Match).
+  // Se o blob mudou desde a leitura, o servidor retorna 412 e o SDK lança erro.
+  // Usamos store.set com Blob/string em vez de setJSON porque setJSON não
+  // repassa as opções de conditional write na v8 do SDK.
+  const body    = JSON.stringify({ items });
+  const options = { contentType: "application/json", ...(etag ? { etag } : {}) };
+  try {
+    await store.set(BLOB_KEY, body, options);
+  } catch (err) {
+    const msg = err?.message || "";
+    if (
+      err?.status === 412 ||
+      msg.includes("412") ||
+      msg.toLowerCase().includes("precondition") ||
+      msg.toLowerCase().includes("etag") ||
+      msg.toLowerCase().includes("conflict")
+    ) {
+      throw new Error("etag_mismatch");
+    }
+    throw err;
   }
-  const newEtag = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  await store.setJSON(BLOB_KEY, { etag: newEtag, items });
-  return newEtag;
 }
 
-// Executa uma função que recebe { items, etag } e retorna items modificados.
-// Retenta automaticamente em caso de conflito.
+// Executa uma função que recebe os items atuais e retorna items modificados.
+// Retenta automaticamente em caso de conflito de ETag.
 async function withLock(store, fn) {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const { items, etag } = await readWithEtag(store);
@@ -86,7 +105,7 @@ async function withLock(store, fn) {
     } catch (err) {
       if (err.message !== "etag_mismatch") throw err;
       const delay = BASE_DELAY * Math.pow(2, attempt) + Math.random() * 30;
-      console.warn(`[queue] conflito de escrita, tentativa ${attempt + 1}/${MAX_RETRIES} (aguardando ${Math.round(delay)}ms)`);
+      console.warn(`[queue] conflito de escrita (ETag HTTP), tentativa ${attempt + 1}/${MAX_RETRIES} (aguardando ${Math.round(delay)}ms)`);
       await new Promise((r) => setTimeout(r, delay));
     }
   }

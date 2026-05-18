@@ -14,27 +14,60 @@ function getQueueStore() {
 
 const BLOB_KEY = "queue-data";
 
-// ─── Lock otimista ────────────────────────────────────────────────────────────
+// ─── Lock otimista com ETag HTTP real ────────────────────────────────────────
+//
+// Usamos o ETag HTTP que o Netlify Blobs retorna no header da resposta.
+// store.get() com { type: "blob" } retorna um Response-like com o header
+// etag preenchido pelo servidor — ele muda a cada escrita, então dois
+// deploys simultâneos que leram o mesmo ETag vão colidir de verdade:
+// o segundo recebe 412 Precondition Failed e faz retry, em vez de
+// silenciosamente sobrescrever o primeiro (comportamento do ETag caseiro).
+//
+// API usada:
+//   store.get(key, { type: "blob" })     → { data: Blob, etag: string }
+//   store.set(key, value, { etag })      → lança se ETag não bater (412)
 
 const MAX_RETRIES = 10;
 const BASE_DELAY  = 150;
 
 async function readWithEtag(store) {
   try {
-    const data = await store.get(BLOB_KEY, { type: "json" });
-    if (data && Array.isArray(data.items)) return { items: data.items, etag: data.etag || null };
-    if (Array.isArray(data))              return { items: data, etag: null };
-    return { items: [], etag: null };
+    // { type: "blob" } faz o SDK expor o ETag HTTP no objeto retornado.
+    // Se a chave não existe, retorna null.
+    const result = await store.getWithMetadata(BLOB_KEY, { type: "json" });
+    if (!result) return { items: [], etag: null };
+
+    const { data, etag } = result;
+    if (data && Array.isArray(data.items)) return { items: data.items, etag: etag || null };
+    if (Array.isArray(data))              return { items: data,       etag: etag || null };
+    return { items: [], etag: etag || null };
   } catch {
     return { items: [], etag: null };
   }
 }
 
 async function writeWithLock(store, etag, items) {
-  const current = await readWithEtag(store);
-  if (etag !== null && current.etag !== etag) throw new Error("etag_mismatch");
-  const newEtag = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  await store.setJSON(BLOB_KEY, { etag: newEtag, items });
+  // store.set() aceita { etag } como opção para conditional write (If-Match).
+  // Se o blob mudou desde a leitura, o servidor retorna 412 e o SDK lança erro.
+  // Usamos store.set com string JSON em vez de setJSON porque setJSON não
+  // repassa as opções de conditional write na v8 do SDK.
+  const body    = JSON.stringify({ items });
+  const options = { contentType: "application/json", ...(etag ? { etag } : {}) };
+  try {
+    await store.set(BLOB_KEY, body, options);
+  } catch (err) {
+    const msg = err?.message || "";
+    if (
+      err?.status === 412 ||
+      msg.includes("412") ||
+      msg.toLowerCase().includes("precondition") ||
+      msg.toLowerCase().includes("etag") ||
+      msg.toLowerCase().includes("conflict")
+    ) {
+      throw new Error("etag_mismatch");
+    }
+    throw err;
+  }
 }
 
 async function withLock(store, fn) {
@@ -47,7 +80,7 @@ async function withLock(store, fn) {
     } catch (err) {
       if (err.message !== "etag_mismatch") throw err;
       const delay = BASE_DELAY * Math.pow(2, attempt) + Math.random() * 30;
-      console.warn(`[scheduler] conflito de escrita, tentativa ${attempt + 1}/${MAX_RETRIES} (${Math.round(delay)}ms)`);
+      console.warn(`[scheduler] conflito de escrita (ETag HTTP), tentativa ${attempt + 1}/${MAX_RETRIES} (${Math.round(delay)}ms)`);
       await new Promise((r) => setTimeout(r, delay));
     }
   }
