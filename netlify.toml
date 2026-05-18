@@ -5,6 +5,15 @@
 
 [build.environment]
   NODE_VERSION = "18"
+  # ── Variáveis de volume de publicação (ajuste conforme necessidade) ──────────
+  # MAX_POSTS_PER_DAY=25          # padrão no código: 50 — recomendado: 25
+  # MAX_POSTS_PER_HOUR=1          # padrão: 1 — não aumentar
+  # MIN_GAP_MINUTES=30            # padrão: 10 — recomendado: 30 (evita ban por burst)
+  # ACCOUNT_GAP_MS=20000          # padrão: 15000 — recomendado: 20000
+  # PUBLISH_BATCH_SIZE=3          # padrão: 5 — recomendado: 3
+  # POST_WINDOW_START=8           # padrão: 0 — só posta a partir das 8h local
+  # POST_WINDOW_END=22            # padrão: 24 — para de postar às 22h local
+  # TZ_OFFSET_HOURS=-3            # fuso horário: -3 = BRT (Brasília)
 
 [dev]
   command = "npm run dev"
@@ -31,8 +40,10 @@
   node_bundler = "esbuild"
 
 [functions."publish"]
-  # Sem delay interno agora — 1 conta = ~3-5s de API. 15s é margem ampla.
-  timeout = 15
+  # Criação de container de vídeo na Meta pode levar 10-15s sozinha.
+  # Com 15s o timeout expirava antes de receber o creation_id, deixando
+  # o item travado em "running" e nunca publicando. 26s resolve isso.
+  timeout = 26
 
 [functions."publish-finish"]
   timeout = 26
