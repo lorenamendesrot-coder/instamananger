@@ -95,12 +95,14 @@ function ExpiredScreen({ drive, onClose, inline }) {
 // ─── Componente principal ─────────────────────────────────────────────────────
 // pickerMode=true: só seleção de arquivos/pasta — sem painel de agendamento
 // onPick(videos): callback no modo picker
-export default function DrivePicker({ accounts: allAccounts = [], onSchedule, onPick, onClose, inline = false, pickerMode = false }) {
+// fileMode="csv": lista CSVs em vez de vídeos (usado na Contingência)
+export default function DrivePicker({ accounts: allAccounts = [], onSchedule, onPick, onClose, inline = false, pickerMode = false, fileMode = "video" }) {
   const drive = useDriveAuth();
 
   const [stack,    setStack]    = useState([{ id:"root", name:"Meu Drive" }]);
   const [folders,  setFolders]  = useState([]);
   const [videos,   setVideos]   = useState([]);
+  const [csvs,     setCsvs]     = useState([]);
   const [loading,  setLoading]  = useState(false);
   const cacheRef = useRef({});  // cache por folderId para não recarregar ao trocar de aba
   const [error,    setError]    = useState(null);
@@ -152,6 +154,7 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
       const cached = cacheRef.current[folderId];
       setFolders(cached.folders);
       setVideos(cached.videos);
+      setCsvs(cached.csvs || []);
       setError(null);
       return;
     }
@@ -166,9 +169,11 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       const folders = data.folders || [];
       const videos  = data.videos  || [];
-      cacheRef.current[folderId] = { folders, videos }; // salva no cache
+      const csvs    = data.csvs    || [];
+      cacheRef.current[folderId] = { folders, videos, csvs }; // salva no cache
       setFolders(folders);
       setVideos(videos);
+      setCsvs(csvs);
       setSelected(new Set());
     } catch (err) {
       if (err.message==="not_connected"||err.message==="token_expired") return;
@@ -334,9 +339,30 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
                 </div>
               ))}
 
-              {folders.length>0 && videos.length>0 && <div style={{height:1,background:"var(--border)",margin:"8px 0"}} />}
+              {folders.length>0 && (fileMode==="csv" ? csvs.length>0 : videos.length>0) && <div style={{height:1,background:"var(--border)",margin:"8px 0"}} />}
 
-              {videos.length>0 && (
+              {/* Modo CSV */}
+              {fileMode==="csv" && csvs.length>0 && (
+                <>
+                  <div style={{fontSize:12,color:"var(--muted)",marginBottom:6}}>{csvs.length} arquivo{csvs.length!==1?"s":""} CSV</div>
+                  {csvs.map(f => (
+                    <div key={f.id} onClick={() => onPick?.([f])}
+                      style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,cursor:"pointer",fontSize:13,border:"1px solid transparent",transition:"all 0.12s"}}
+                      onMouseEnter={e=>{e.currentTarget.style.background="rgba(124,92,252,0.08)";e.currentTarget.style.borderColor="rgba(124,92,252,0.3)";}}
+                      onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";}}>
+                      <span style={{fontSize:18}}>📄</span>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+                        {f.size>0 && <div style={{fontSize:10,color:"var(--muted)"}}>{(f.size/1024).toFixed(1)} KB</div>}
+                      </div>
+                      <span style={{fontSize:11,color:"var(--accent-light)",flexShrink:0}}>Importar →</span>
+                    </div>
+                  ))}
+                </>
+              )}
+
+              {/* Modo vídeo (padrão) */}
+              {fileMode!=="csv" && videos.length>0 && (
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                   <span style={{fontSize:12,color:"var(--muted)"}}>
                     {videos.length} vídeo{videos.length!==1?"s":""}
@@ -348,7 +374,7 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
                 </div>
               )}
 
-              {videos.map(v => {
+              {fileMode!=="csv" && videos.map(v => {
                 const isSel=selected.has(v.id);
                 return (
                   <div key={v.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,cursor:"pointer",fontSize:13,background:isSel?"rgba(124,58,237,0.12)":"transparent",border:isSel?"1px solid rgba(124,58,237,0.35)":"1px solid transparent"}}
@@ -367,12 +393,12 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
                 );
               })}
 
-              {!loading&&folders.length===0&&videos.length===0 && (
-                <div style={{textAlign:"center",padding:40,color:"var(--muted)",fontSize:13}}>Pasta vazia</div>
+              {!loading&&folders.length===0&&(fileMode==="csv"?csvs.length===0:videos.length===0) && (
+                <div style={{textAlign:"center",padding:40,color:"var(--muted)",fontSize:13}}>{fileMode==="csv" ? "Nenhum CSV encontrado nesta pasta" : "Pasta vazia"}</div>
               )}
 
-              {/* Botão confirmar seleção no modo picker */}
-              {pickerMode && selected.size > 0 && (
+              {/* Botão confirmar seleção no modo picker de vídeos */}
+              {pickerMode && fileMode!=="csv" && selected.size > 0 && (
                 <div style={{padding:"12px 0 4px",borderTop:"1px solid var(--border)",marginTop:10}}>
                   <button
                     className="btn btn-primary"
