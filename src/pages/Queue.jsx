@@ -118,14 +118,14 @@ export default function Queue() {
 
   const pendingCount = mainQueue.filter(q=>q.status==="pending").length;
   const runningCount = mainQueue.filter(q=>q.status==="running").length;
-  const doneCount    = mainQueue.filter(q=>q.status==="done").length;
+  const doneCount    = mainQueue.filter(q=>q.status==="done"||q.status==="posted").length;
   const errorCount   = mainQueue.filter(q=>q.status==="error").length;
 
   const dayGroups = useMemo(() => buildDayGroups(mainQueue.filter(q=>q.status==="pending"||q.status==="running")), [mainQueue]);
 
   const filtered = useMemo(() => {
     let items = mainQueue;
-    if (filterStatus !== "all") items = items.filter(q => q.status===filterStatus || (q.status==="done" && activeVfParentIds.has(q.id)));
+    if (filterStatus !== "all") items = items.filter(q => q.status===filterStatus || (filterStatus==="done" && q.status==="posted") || (q.status==="done" && activeVfParentIds.has(q.id)));
     if (filterDay !== "all") { const s=Number(filterDay); items = items.filter(q => q.scheduledAt>=s && q.scheduledAt<=s+86400000-1); }
     if (search.trim()) items = items.filter(q => matchesSearch(q, search.trim()));
     return sortItems(items, sortBy);
@@ -339,7 +339,7 @@ export default function Queue() {
                 {[
                   {label:"Total",     value:mainQueue.length,                               color:"var(--text)"   },
                   {label:"Pendentes", value:mainQueue.filter(q=>q.status==="pending").length,color:"var(--info)"   },
-                  {label:"Publicados",value:mainQueue.filter(q=>q.status==="done").length,   color:"var(--success)"},
+                  {label:"Publicados",value:mainQueue.filter(q=>q.status==="done"||q.status==="posted").length,   color:"var(--success)"},
                   {label:"Rodando",   value:mainQueue.filter(q=>q.status==="running").length, color:"var(--warning)"},
                   {label:"Erros",     value:mainQueue.filter(q=>q.status==="error").length,  color:"var(--danger)" },
                 ].map(({label,value,color}) => (
