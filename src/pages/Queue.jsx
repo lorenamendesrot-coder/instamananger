@@ -545,9 +545,11 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   const canExpand   = hasSubItems || hasResults;
 
   // Contas — colapsa se muitas
-  const accs        = item.accounts || [];
-  const visibleAccs = accs.slice(0, 6);
-  const hiddenAccs  = accs.length - 6;
+  const accs          = item.accounts || [];
+  const qty           = accs.length;
+  const visibleAccs   = accs.slice(0, 6);
+  const hiddenAccs    = accs.length - 6;
+  const scheduledDate = new Date(item.scheduledAt);
 
   // Badge de status label
   let statusLabel = "Agendado";
