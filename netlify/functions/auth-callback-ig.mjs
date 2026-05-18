@@ -105,14 +105,33 @@ export const handler = async (event) => {
     const tokenDuration = longData.access_token ? "long-lived" : "short-lived";
 
     // ── 3. Buscar perfil da conta ──────────────────────────────────────────
-    // Novo Instagram Business Login: token vai no header Authorization, não na query string
-    const profile = await apiFetch(
+    // Tenta com Authorization header primeiro (novo fluxo ig_biz_login_oauth)
+    // Se falhar, tenta com access_token na query string (fluxo antigo)
+    let profile = await apiFetch(
       `${IG_GRAPH}/me?fields=${IG_FIELDS}`,
       { headers: { "Authorization": `Bearer ${longToken}` } }
     );
 
     if (profile.error) {
-      throw new Error(`Perfil: ${profile.error.message}`);
+      console.log("[auth-callback-ig] header attempt failed:", JSON.stringify(profile.error));
+      // Fallback: tenta com access_token na query string
+      profile = await apiFetch(
+        `${IG_GRAPH}/me?fields=${IG_FIELDS}&access_token=${longToken}`
+      );
+    }
+
+    if (profile.error) {
+      console.log("[auth-callback-ig] query string attempt also failed:", JSON.stringify(profile.error));
+      // Último recurso: busca só o id sem campos extras
+      profile = await apiFetch(
+        `${IG_GRAPH}/me?access_token=${longToken}`
+      );
+    }
+
+    console.log("[auth-callback-ig] profile response:", JSON.stringify(profile));
+
+    if (profile.error) {
+      throw new Error(`Perfil: ${profile.error.message} (code: ${profile.error.code}, type: ${profile.error.type})`);
     }
 
     // Se for App2, salva como token_app2 (não sobrescreve access_token original)
