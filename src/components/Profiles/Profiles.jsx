@@ -493,12 +493,14 @@ export default function Profiles() {
   const [refreshing,    setRefreshing]    = useState(false);
   const [refreshMsg,    setRefreshMsg]    = useState(null);
 
-  // Fechar dropdown ao clicar fora
+  // Fechar dropdown ao clicar fora (mousedown, sem capture, para não engolir o click dos itens)
   useEffect(() => {
     if (!sortOpen) return;
-    const handler = () => setSortOpen(false);
-    document.addEventListener("click", handler, true);
-    return () => document.removeEventListener("click", handler, true);
+    const handler = (e) => {
+      if (!e.target.closest("[data-sort-dropdown]")) setSortOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, [sortOpen]);
 
   useEffect(() => {
@@ -652,7 +654,7 @@ export default function Profiles() {
         </div>
 
         {/* Ordenar por — dropdown */}
-        <div style={{ position: "relative" }}>
+        <div data-sort-dropdown style={{ position: "relative" }}>
           <button
             onClick={() => setSortOpen((v) => !v)}
             style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", color: sortBy !== "none" ? "var(--accent2)" : "var(--muted)", background: sortBy !== "none" ? "rgba(139,92,246,0.1)" : "var(--bg3)", border: sortBy !== "none" ? "1px solid rgba(139,92,246,0.35)" : "1px solid var(--border)", transition: "all 0.15s", whiteSpace: "nowrap" }}
