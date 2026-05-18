@@ -427,8 +427,8 @@ async function deleteItemFromBlob(id) {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// DB version deve ser SEMPRE igual ao useDB.js — atualmente v5
-const SW_DB_VERSION = 5;
+// DB version deve ser SEMPRE igual ao useDB.js — atualmente v6 (adicionado store contingency)
+const SW_DB_VERSION = 6;
 let _db = null;
 
 function openDB() {
@@ -449,6 +449,9 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains("protection")) {
         db.createObjectStore("protection", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("contingency")) {
+        db.createObjectStore("contingency", { keyPath: "id" });
       }
     };
     req.onsuccess = () => {
