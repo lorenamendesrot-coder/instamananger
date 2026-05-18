@@ -146,10 +146,18 @@ export const handler = async (event) => {
     })
   );
 
-  // Filtra resultados: null = ainda processando (não inclui em results)
+  // Filtra resultados:
+  // - null = ainda IN_PROGRESS (não inclui, scheduler vai reagendar)
+  // - rejected = erro inesperado (inclui como erro explícito para o SW não tratar como IN_PROGRESS)
   const results = settled
-    .filter((s) => s.status === "fulfilled" && s.value !== null)
-    .map((s) => s.value);
+    .map((s, i) => {
+      if (s.status === "fulfilled") return s.value; // null ou objeto resultado
+      // Promise rejeitada — exceção inesperada dentro do map
+      const item = pending[i];
+      console.error(`[publish-finish] exceção inesperada para @${item?.username}:`, s.reason?.message || s.reason);
+      return { account_id: item?.account_id, username: item?.username, success: false, error: s.reason?.message || "Erro interno", errorCode: null };
+    })
+    .filter((r) => r !== null);
 
   return { statusCode: 200, headers, body: JSON.stringify({ results }) };
 };

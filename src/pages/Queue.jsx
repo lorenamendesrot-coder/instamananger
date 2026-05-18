@@ -693,10 +693,18 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
                     <AccAvatar acc={{ username: sub.username }} size={20} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>@{sub.username}</span>
+                      {sub.status === "error" && sub.attempts && (
+                        <span style={{ fontSize: 10, color: "var(--muted)", marginLeft: 6 }}>tentativa {sub.attempts}/40</span>
+                      )}
                     </div>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: s.color }}>
-                      {sub.status === "running" ? "Publicando…" : sub.status === "pending" ? "Aguardando…" : sub.status === "done" ? "Publicado" : sub.status === "error" ? "Erro" : sub.status}
-                    </span>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: s.color }}>
+                        {sub.status === "running" ? "Publicando…" : sub.status === "pending" ? "Aguardando…" : sub.status === "done" ? "Publicado" : sub.status === "error" ? "Erro" : sub.status}
+                      </span>
+                      {sub.status === "error" && sub.error && (
+                        <span style={{ fontSize: 10, color: "var(--danger)", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={sub.error}>{sub.error}</span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
