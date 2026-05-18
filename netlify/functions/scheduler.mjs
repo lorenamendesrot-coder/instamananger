@@ -96,7 +96,17 @@ async function queueSaveMany(store, newItems) {
 // sem nenhum sleep dentro da função. Padrão: 15s (cabe folgado em 5 ticks/min).
 const ACCOUNT_GAP_MS = parseInt(process.env.ACCOUNT_GAP_MS || "15000");
 
-const RETRY_DELAY_MS = 10 * 60 * 1000; // 10 minutos
+const RETRY_DELAY_MS = 60 * 60 * 1000; // 60 minutos (era 10min — aumentado para não dobrar consumo de cota em falhas transitórias)
+
+// Erros definitivos da Meta API — não vale fazer retry, o conteúdo precisa ser corrigido
+const ERROS_DEFINITIVOS = new Set([
+  2207026, // formato de vídeo não suportado
+  2207027, // aspect ratio inválido
+  2207028, // duração inválida
+  2207036, // tamanho de arquivo excede o limite
+  36003,   // permissão insuficiente na conta
+  100,     // parâmetro inválido
+]);
 
 // ─── Publish-finish via HTTP ──────────────────────────────────────────────────
 async function callPublishFinish(vf) {
@@ -147,7 +157,7 @@ async function processVideoFinish(store, vf) {
     }
 
     const attempts = (vf.attempts || 0) + 1;
-    if (attempts >= (vf.maxAttempts || 40)) {
+    if (attempts >= (vf.maxAttempts || 20)) {
       await queueUpdate(store, { ...vf, status: "error", error: "Timeout: vídeo não processou após múltiplas tentativas" });
       await pushResultToParent(store, vf.historyId, {
         account_id: vf.account_id,
@@ -157,11 +167,11 @@ async function processVideoFinish(store, vf) {
       });
     } else {
       console.log(`[scheduler] video_finish @${vf.username} IN_PROGRESS (tentativa ${attempts})`);
-      await queueUpdate(store, { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 30000 });
+      await queueUpdate(store, { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 90000 }); // 90s entre checks (era 30s — reduzido para poupar chamadas à Meta API)
     }
   } catch (err) {
     const attempts = (vf.attempts || 0) + 1;
-    if (attempts >= (vf.maxAttempts || 40)) {
+    if (attempts >= (vf.maxAttempts || 20)) {
       await queueUpdate(store, { ...vf, status: "error", error: err.message });
       await pushResultToParent(store, vf.historyId, {
         account_id: vf.account_id,
@@ -170,7 +180,7 @@ async function processVideoFinish(store, vf) {
         error:      err.message,
       });
     } else {
-      await queueUpdate(store, { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 30000 });
+      await queueUpdate(store, { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 90000 }); // 90s entre checks
     }
   }
 }
@@ -299,20 +309,27 @@ async function processPerAccount(store, item) {
   }
 
   try {
-    const res = await fetch(`${SITE_URL}/.netlify/functions/publish`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        accounts:        [item.account],
-        media_url:       mediaUrl,
-        media_type:      item.mediaType,
-        post_type:       item.postType,
-        captions:        item.captions        || {},
-        default_caption: item.caption         || "",
-        skip_rate_limit: !!item.warmup,
-        // batch_offset 0 → publica só a 1 conta do array
-      }),
-    });
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 22000); // 22s < timeout da function (26s)
+    let res;
+    try {
+      res = await fetch(`${SITE_URL}/.netlify/functions/publish`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accounts:        [item.account],
+          media_url:       mediaUrl,
+          media_type:      item.mediaType,
+          post_type:       item.postType,
+          captions:        item.captions        || {},
+          default_caption: item.caption         || "",
+          skip_rate_limit: !!item.warmup,
+        }),
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data   = await res.json();
@@ -339,7 +356,7 @@ async function processPerAccount(store, item) {
         account_id:  item.account_id,
         username:    item.username,
         accounts:    [item.account],
-        scheduledAt: Date.now() + 30000,
+        scheduledAt: Date.now() + 90000,  // 1º check em 90s — vídeos curtos já costumam estar prontos
         historyId:   item.historyId,
         parentId:    item.parentId,
         mediaUrl:    item.mediaUrl,
@@ -348,7 +365,7 @@ async function processPerAccount(store, item) {
         caption:     item.caption || "",
         createdAt:   new Date().toISOString(),
         attempts:    0,
-        maxAttempts: 40, // ~20 minutos de margem para o Instagram processar
+        maxAttempts: 20, // ~30 minutos de margem (20 checks × 90s) — era 40×30s=20min
       });
       // Marca o sub-item como aguardando video_finish (não done ainda)
       await queueUpdate(store, { ...item, status: "done", awaitingVideoFinish: true });
@@ -369,14 +386,24 @@ async function processPerAccount(store, item) {
       return;
     }
 
-    // Falha — retry 1x (salvo se já é retry)
+    // Falha — retry 1x apenas para erros recuperáveis (rede, timeout, 5xx)
     const errMsg = result.error || "Erro desconhecido";
     console.error(`[scheduler] ❌ @${item.username}: ${errMsg}`);
     const alreadyFailed = item.failedAccountIds || [];
+    const ehDefinitivo  = ERROS_DEFINITIVOS.has(result.errorCode);
 
-    if (!alreadyFailed.includes(item.account_id)) {
-      // 1ª falha → reagenda em 10min, mas já registra resultado provisório no pai
-      // para não "sumir" da lista. Será sobrescrito se a 2ª tentativa tiver sucesso.
+    if (ehDefinitivo) {
+      // Erro de conteúdo (formato inválido, aspect ratio, etc.) — não adianta retryar
+      console.warn(`[scheduler] ⛔ @${item.username} erro definitivo (code ${result.errorCode}) — sem retry`);
+      await queueUpdate(store, { ...item, status: "error", error: errMsg, finishedAt: new Date().toISOString() });
+      await pushResultToParent(store, item.historyId, {
+        account_id: item.account_id,
+        username:   item.username,
+        success:    false,
+        error:      errMsg,
+      });
+    } else if (!alreadyFailed.includes(item.account_id)) {
+      // 1ª falha recuperável → reagenda em 60min
       await queueSave(store, {
         ...item,
         id:               `retry-${item.id}-${Date.now()}`,
@@ -393,10 +420,10 @@ async function processPerAccount(store, item) {
         account_id: item.account_id,
         username:   item.username,
         success:    false,
-        error:      `${errMsg} (retry em 10min…)`,
+        error:      `${errMsg} (retry em 60min…)`,
         retrying:   true,
       });
-      console.log(`[scheduler] ↻ @${item.username} reagendado em 10min`);
+      console.log(`[scheduler] ↻ @${item.username} reagendado em 60min`);
     } else {
       // 2ª falha → desiste
       await queueUpdate(store, { ...item, status: "error", error: errMsg, finishedAt: new Date().toISOString() });
@@ -409,6 +436,12 @@ async function processPerAccount(store, item) {
     }
 
   } catch (err) {
+    // Timeout de rede: reagenda em 5min em vez de marcar erro definitivo
+    if (err.name === "AbortError") {
+      console.warn(`[scheduler] ⏱ @${item.username} timeout ao chamar publish — reagendando em 5min`);
+      await queueUpdate(store, { ...item, status: "pending", scheduledAt: Date.now() + 5 * 60 * 1000 });
+      return;
+    }
     console.error(`[scheduler] ❌ per_account @${item.username}: ${err.message}`);
     await queueUpdate(store, { ...item, status: "error", error: err.message, finishedAt: new Date().toISOString() });
     await pushResultToParent(store, item.historyId, {
@@ -430,7 +463,20 @@ async function processItem(store, item) {
   console.log(`[scheduler] item ${item.id} — explodindo em ${total} sub-itens per_account`);
 
   const historyId = item.historyId || `h-${item.id}-${Date.now()}`;
-  const now       = Date.now();
+
+  // Guarda contra processamento duplo: se já existem sub-itens com este historyId,
+  // o scheduler bateu duas vezes no mesmo item (cron overlap). Aborta.
+  // Lê a fila direto do store para ter a versão mais recente.
+  const currentQueue = await queueReadAll(store);
+  const existingChildren = currentQueue.filter(
+    (x) => x.historyId === historyId && x.type === "per_account"
+  );
+  if (existingChildren.length > 0) {
+    console.warn(`[scheduler] ⚠️ sub-itens já existem para historyId=${historyId} — abortando processItem para evitar duplicatas`);
+    return;
+  }
+
+  const now = Date.now();
 
   const urlsToPost = item.mediaUrls || [item.mediaUrl];
 
