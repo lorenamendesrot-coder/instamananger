@@ -3,31 +3,10 @@
 const TICK_INTERVAL = 60000; // 1 tick/min — era 20s (3x/min), reduzido para poupar GET /api/queue
 
 self.addEventListener("install",  (e) => { e.waitUntil(self.skipWaiting()); });
-self.addEventListener("activate", (e) => { e.waitUntil(self.clients.claim().then(() => migrateOldItems()).then(() => startTicker())); });
+self.addEventListener("activate", (e) => { e.waitUntil(self.clients.claim()); startTicker(); });
 
 let tickerInterval = null;
 let _tickRunning   = false; // impede dois ticks simultâneos — causa do loop de video_finish
-
-
-// ─── Migração de itens legados ────────────────────────────────────────────────
-// Itens video_finish criados antes desta versão podem ter maxAttempts=20 (antigo padrão).
-// Corrige para 5 na inicialização para não esgotar cota da Meta.
-async function migrateOldItems() {
-  try {
-    const db = await openDB();
-    const queue = await readQueue();
-    const toFix = queue.filter(
-      (x) => x.type === "video_finish" && x.status === "pending" && (x.maxAttempts || 0) > 5
-    );
-    if (toFix.length === 0) return;
-    console.log(`[SW] migrando ${toFix.length} video_finish com maxAttempts legado → 5`);
-    for (const item of toFix) {
-      await updateItem(item.id, { maxAttempts: 5 });
-    }
-  } catch (e) {
-    console.warn("[SW] migração falhou (não crítico):", e.message);
-  }
-}
 
 function startTicker() {
   if (tickerInterval) clearInterval(tickerInterval);
@@ -36,9 +15,7 @@ function startTicker() {
 }
 
 // ─── Tick principal ───────────────────────────────────────────────────────────
-let _migrationDone = false;
 async function tick() {
-  if (!_migrationDone) { _migrationDone = true; await migrateOldItems(); }
   // Se o tick anterior ainda não terminou, pula.
   // Com 50 contas o processamento pode levar mais que TICK_INTERVAL (20s),
   // causando ticks sobrepostos que disparam publish várias vezes no mesmo item.

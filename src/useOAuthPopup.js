@@ -3,6 +3,8 @@
 //   "facebook"  → Facebook Login (requer Página vinculada ao Instagram)
 //   "instagram" → Instagram Login (direto, sem Página — lançado em jul/2024)
 //
+// No desktop: abre popup (window.open)
+// No mobile/tablet: usa redirect da aba atual (popups são bloqueados pelo iOS/Android)
 // O fluxo "instagram" é o recomendado para contas sem Página.
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -26,15 +28,19 @@ const IG_SCOPE = [
   "instagram_business_manage_messages",
 ].join(",");
 
-function buildOAuthUrl(flow, appId) {
+// Detecta mobile/tablet — nesses dispositivos popups são bloqueados pelo SO/browser
+function isMobile() {
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 768;
+}
+
+function buildOAuthUrl(flow, appId, useRedirect = false) {
+  const state = useRedirect ? "redirect" : "popup";
   if (flow === "instagram") {
     const redirect = encodeURIComponent(window.location.origin + "/api/auth-callback-ig");
-    // ✅ URL correta: www.instagram.com (não api.instagram.com)
-    return `https://www.instagram.com/oauth/authorize?client_id=${appId}&redirect_uri=${redirect}&scope=${IG_SCOPE}&response_type=code&state=popup`;
+    return `https://www.instagram.com/oauth/authorize?client_id=${appId}&redirect_uri=${redirect}&scope=${IG_SCOPE}&response_type=code&state=${state}`;
   }
-  // facebook (padrão legado)
   const redirect = encodeURIComponent(window.location.origin + "/api/auth-callback");
-  return `https://www.facebook.com/v21.0/dialog/oauth?client_id=${appId}&redirect_uri=${redirect}&scope=${FB_SCOPE}&response_type=code&state=popup`;
+  return `https://www.facebook.com/v21.0/dialog/oauth?client_id=${appId}&redirect_uri=${redirect}&scope=${FB_SCOPE}&response_type=code&state=${state}`;
 }
 
 // flow: "instagram" | "facebook"  (padrão: "instagram")
@@ -44,19 +50,16 @@ export function useOAuthPopup({ onAccounts, onError, flow = "instagram" }) {
   const popupRef = useRef(null);
   const timerRef = useRef(null);
 
-  // Escuta mensagens do popup filho
+  // Escuta mensagens do popup filho (desktop)
   useEffect(() => {
     const handler = (event) => {
       if (event.origin !== window.location.origin) return;
-
       const { type, accounts, error } = event.data || {};
-
       if (type === "OAUTH_ACCOUNTS" && accounts) {
         closePopup();
         setStatus("saving");
         onAccounts(accounts);
       }
-
       if (type === "OAUTH_ERROR") {
         closePopup();
         setStatus("error");
@@ -64,7 +67,6 @@ export function useOAuthPopup({ onAccounts, onError, flow = "instagram" }) {
         onError?.(error);
       }
     };
-
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
   }, [onAccounts, onError]);
@@ -76,14 +78,24 @@ export function useOAuthPopup({ onAccounts, onError, flow = "instagram" }) {
   }, []);
 
   const openPopup = useCallback(() => {
-    // Para o fluxo Instagram, usa VITE_META_IG_APP_ID (Instagram App ID separado)
-    // Para Facebook, usa VITE_META_APP_ID (Facebook App ID)
     const appId = flow === "instagram"
       ? (import.meta.env.VITE_META_IG_APP_ID || import.meta.env.VITE_META_APP_ID)
       : (import.meta.env.VITE_META_FB_APP_ID || import.meta.env.VITE_META_APP_ID);
 
-    const url   = buildOAuthUrl(flow, appId);
+    const mobile = isMobile();
+    const url    = buildOAuthUrl(flow, appId, mobile);
 
+    // ── Mobile: redirect da aba atual ──────────────────────────────────────────
+    // iOS/Android bloqueiam window.open. O backend já suporta state=redirect
+    // e redireciona de volta para /?accounts=... ao finalizar.
+    if (mobile) {
+      setStatus("waiting");
+      setErrorMsg(null);
+      window.location.href = url;
+      return;
+    }
+
+    // ── Desktop: popup centralizado ────────────────────────────────────────────
     const w = 520, h = 680;
     const left = Math.round(window.screenX + (window.outerWidth  - w) / 2);
     const top  = Math.round(window.screenY + (window.outerHeight - h) / 2);
@@ -95,9 +107,10 @@ export function useOAuthPopup({ onAccounts, onError, flow = "instagram" }) {
     );
 
     if (!popup) {
-      setStatus("error");
-      setErrorMsg("Popup bloqueado pelo navegador. Permita popups para este site e tente novamente.");
-      onError?.("popup_blocked");
+      // Popup bloqueado no desktop — fallback automático para redirect
+      setStatus("waiting");
+      setErrorMsg(null);
+      window.location.href = buildOAuthUrl(flow, appId, true);
       return;
     }
 

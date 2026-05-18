@@ -150,19 +150,21 @@ function SchedulerProvider({ addEntry, children }) {
         }
         await qApi.update({ ...item, _historySynced: true }).catch(() => {});
       }
-      if (doneSemHistoria.length > 0) window.dispatchEvent(new CustomEvent("sw:queue-update"));
+      // REMOVIDO: não disparar sw:queue-update de dentro do reload()
+      // Isso causava loop infinito: reload → dispatch → throttle bypass → reload
+      // O SW já emite sw:queue-update no próprio tick dele (a cada 20s)
     } catch (e) { console.warn("[sync-history]", e); }
   }, []);
 
   useEffect(() => {
     reload();
-    // Throttle: ignora eventos sw:queue-update repetidos em menos de 15s
+    // Throttle: ignora eventos sw:queue-update repetidos em menos de 30s
     // O SW emite este evento a cada tick (20s) + a cada video_finish — sem throttle
     // isso causa 3-5 requests/min desnecessários ao Netlify Blob
     let lastReload = 0;
     const h = () => {
       const now = Date.now();
-      if (now - lastReload < 15000) return;
+      if (now - lastReload < 30000) return;
       lastReload = now;
       reload();
     };
@@ -352,9 +354,7 @@ function SchedulerProvider({ addEntry, children }) {
       }
     };
 
-    // Poll conservador: o SW já processa video_finish e notifica via postMessage.
-    // O polling aqui é só fallback de sincronização — não precisa ser agressivo.
-    // 4s causava ERR_HTTP2_PROTOCOL_ERROR com 10+ contas simultâneas.
+    // Poll adaptativo: 4s quando há itens rodando/done, 12s caso contrário
     let ivTimeout;
     const scheduleTick = async () => {
       const all = await qApi.getAll().catch(() => []);
@@ -362,7 +362,7 @@ function SchedulerProvider({ addEntry, children }) {
         !x.type && (x.status === "running" || x.status === "pending")
       );
       await tick();
-      ivTimeout = setTimeout(scheduleTick, hasRunning ? 30000 : 60000);
+      ivTimeout = setTimeout(scheduleTick, hasRunning ? 4000 : 12000);
     };
     scheduleTick();
     return () => { clearTimeout(ivTimeout); clearInterval(cronCheck); document.removeEventListener("visibilitychange", onVisible); };
