@@ -12,14 +12,21 @@ async function apiFetch(url) {
 
 export const handler = async (event) => {
   const code    = event.queryStringParameters?.code;
-  const isPopup = event.queryStringParameters?.state === "popup";
+  const state   = event.queryStringParameters?.state || "";
+  const isPopup = state === "popup" || state === "popup_app2";
+  const isApp2  = state === "popup_app2";  // ← conexão via App 2
 
   if (!code) {
-    return respondWith({ error: "Código de autorização ausente" }, isPopup);
+    return respondWith({ error: "Código de autorização ausente" }, isPopup, isApp2);
   }
 
-  const APP_ID       = process.env.META_FB_APP_ID     || process.env.META_APP_ID;
-  const APP_SECRET   = process.env.META_FB_APP_SECRET  || process.env.META_APP_SECRET;
+  // Se vier via App2, usa META_APP_ID_2 / META_APP_SECRET_2
+  const APP_ID       = isApp2
+    ? (process.env.META_APP_ID_2 || process.env.META_FB_APP_ID || process.env.META_APP_ID)
+    : (process.env.META_FB_APP_ID || process.env.META_APP_ID);
+  const APP_SECRET   = isApp2
+    ? (process.env.META_APP_SECRET_2 || process.env.META_FB_APP_SECRET || process.env.META_APP_SECRET)
+    : (process.env.META_FB_APP_SECRET || process.env.META_APP_SECRET);
   const REDIRECT_URI = process.env.META_FB_REDIRECT_URI || process.env.META_REDIRECT_URI;
 
   try {
@@ -82,9 +89,8 @@ export const handler = async (event) => {
       );
 
       if (detail.error) {
-        // Logar e continuar — não falhar todo o fluxo por uma conta
         console.warn(`Erro ao buscar detalhes da conta ${igId}:`, detail.error.message);
-        // Salvar conta mesmo sem detalhes para não perder o token
+        const tokenField = isApp2 ? { token_app2: pageToken } : { access_token: pageToken };
         accounts.push({
           id:              igId,
           username:        "",
@@ -96,7 +102,7 @@ export const handler = async (event) => {
           followers_count: null,
           follows_count:   null,
           media_count:     null,
-          access_token:    pageToken,
+          ...tokenField,
           page_id:         pageId,
           page_name:       page.name || "",
           connected_at:    new Date().toISOString(),
@@ -105,6 +111,7 @@ export const handler = async (event) => {
         continue;
       }
 
+      const tokenField = isApp2 ? { token_app2: pageToken } : { access_token: pageToken };
       accounts.push({
         id:              igId,
         username:        detail.username        || "",
@@ -116,34 +123,37 @@ export const handler = async (event) => {
         followers_count: detail.followers_count ?? null,
         follows_count:   detail.follows_count   ?? null,
         media_count:     detail.media_count     ?? null,
-        access_token:    pageToken,
+        ...tokenField,
         page_id:         pageId,
         page_name:       page.name || "",
-        connected_at:    new Date().toISOString(),
+        connected_at:    isApp2 ? undefined : new Date().toISOString(), // não sobrescreve data original
+        token_app2_connected_at: isApp2 ? new Date().toISOString() : undefined,
       });
     }
 
     if (accounts.length === 0) {
       const msg = "Nenhuma conta Instagram Business encontrada. Verifique se suas páginas do Facebook têm contas Instagram Business vinculadas.";
-      return respondWith({ error: msg }, isPopup);
+      return respondWith({ error: msg }, isPopup, isApp2);
     }
 
-    return respondWith({ accounts }, isPopup);
+    return respondWith({ accounts, is_app2: isApp2 }, isPopup, isApp2);
 
   } catch (err) {
     console.error("auth-callback error:", err);
-    return respondWith({ error: err.message }, isPopup);
+    return respondWith({ error: err.message }, isPopup, isApp2);
   }
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function respondWith({ accounts, error }, isPopup) {
+function respondWith({ accounts, error, is_app2 }, isPopup, isApp2) {
   if (isPopup) {
     // Popup: retorna HTML que faz postMessage para a janela pai e fecha
+    // Usa tipo diferente para App2 — o frontend salva como token_app2
+    const msgType = isApp2 ? "OAUTH_APP2_ACCOUNTS" : "OAUTH_ACCOUNTS";
     const payload = accounts
-      ? JSON.stringify({ type: "OAUTH_ACCOUNTS", accounts })
-      : JSON.stringify({ type: "OAUTH_ERROR",    error: error || "Erro desconhecido" });
+      ? JSON.stringify({ type: msgType, accounts })
+      : JSON.stringify({ type: "OAUTH_ERROR", error: error || "Erro desconhecido" });
 
     const html = `<!DOCTYPE html>
 <html>
@@ -165,8 +175,8 @@ function respondWith({ accounts, error }, isPopup) {
 <div class="box">
   ${accounts
     ? `<div class="ok">✅</div>
-       <h2>${accounts.length} conta(s) conectada(s)</h2>
-       <p>Fechando automaticamente...</p>`
+       <h2>${isApp2 ? "App 2 vinculado!" : accounts.length + " conta(s) conectada(s)"}</h2>
+       <p>${isApp2 ? accounts.length + " conta(s) com fallback ativado" : "Fechando automaticamente..."}</p>`
     : `<div class="ok">❌</div>
        <h2>Erro ao conectar</h2>
        <p>${error || "Tente novamente."}</p>`

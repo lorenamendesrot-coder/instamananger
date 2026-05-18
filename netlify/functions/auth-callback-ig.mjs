@@ -37,27 +37,32 @@ export const handler = async (event) => {
   const params  = event.queryStringParameters || {};
   const code    = params.code;
   const state   = params.state;
-  const isPopup = state === "popup";
+  const isPopup = state === "popup" || state === "popup_app2";
+  const isApp2  = state === "popup_app2";
 
   // Erro direto do Instagram (usuário cancelou, etc.)
   if (params.error) {
     const reason = params.error_description || params.error || "Acesso negado";
-    return respondWith({ error: reason }, isPopup);
+    return respondWith({ error: reason }, isPopup, isApp2);
   }
 
   if (!code) {
-    return respondWith({ error: "Código de autorização ausente" }, isPopup);
+    return respondWith({ error: "Código de autorização ausente" }, isPopup, isApp2);
   }
 
-  // ✅ Usa META_IG_APP_ID e META_IG_APP_SECRET para o fluxo Instagram Login
-  // (IDs separados do Facebook Login — configurados no painel do app no Meta)
-  const APP_ID     = process.env.META_IG_APP_ID     || process.env.META_APP_ID;
-  const APP_SECRET = process.env.META_IG_APP_SECRET  || process.env.META_APP_SECRET;
+  // App 2 usa META_IG_APP_ID_2 / META_IG_APP_SECRET_2 (Instagram Login)
+  // ou META_APP_ID_2 / META_APP_SECRET_2 como fallback genérico
+  const APP_ID     = isApp2
+    ? (process.env.META_IG_APP_ID_2 || process.env.META_APP_ID_2 || process.env.META_IG_APP_ID || process.env.META_APP_ID)
+    : (process.env.META_IG_APP_ID   || process.env.META_APP_ID);
+  const APP_SECRET = isApp2
+    ? (process.env.META_IG_APP_SECRET_2 || process.env.META_APP_SECRET_2 || process.env.META_IG_APP_SECRET || process.env.META_APP_SECRET)
+    : (process.env.META_IG_APP_SECRET   || process.env.META_APP_SECRET);
 
-  // Usa META_REDIRECT_URI_IG diretamente — deve ser a URL exata cadastrada no Meta:
-  // ex: https://eclectic-bombolone-29d49b.netlify.app/api/auth-callback-ig
-  const REDIRECT_URI = process.env.META_REDIRECT_URI_IG
-    || (process.env.URL ? process.env.URL + "/api/auth-callback-ig" : "");
+  // Redirect URI: App2 pode ter URI própria (META_REDIRECT_URI_IG_2) ou usa a mesma do App1
+  const REDIRECT_URI = isApp2
+    ? (process.env.META_REDIRECT_URI_IG_2 || process.env.META_REDIRECT_URI_IG)
+    : (process.env.META_REDIRECT_URI_IG || (process.env.URL ? process.env.URL + "/api/auth-callback-ig" : ""));
 
   if (!APP_ID || !APP_SECRET) {
     return respondWith({ error: "Configuração do app ausente (META_IG_APP_ID / META_IG_APP_SECRET)" }, isPopup);
@@ -105,6 +110,11 @@ export const handler = async (event) => {
       throw new Error(`Perfil: ${profile.error.message}`);
     }
 
+    // Se for App2, salva como token_app2 (não sobrescreve access_token original)
+    const tokenFields = isApp2
+      ? { token_app2: longToken, token_app2_connected_at: new Date().toISOString() }
+      : { access_token: longToken, token_duration: tokenDuration, token_expires_at: expiresAt, token_status: "active" };
+
     const account = {
       id:               profile.id,
       username:         profile.username         || "",
@@ -116,31 +126,29 @@ export const handler = async (event) => {
       followers_count:  profile.followers_count  ?? null,
       follows_count:    profile.follows_count    ?? null,
       media_count:      profile.media_count      ?? null,
-      access_token:     longToken,
-      token_duration:   tokenDuration,
-      token_expires_at: expiresAt,
-      token_status:     "active",
-      added_via:        "instagram_login",   // ← identifica o fluxo
+      ...tokenFields,
+      added_via:        "instagram_login",
       page_id:          null,
       page_name:        null,
-      connected_at:     new Date().toISOString(),
+      ...(isApp2 ? {} : { connected_at: new Date().toISOString() }),
     };
 
-    return respondWith({ accounts: [account] }, isPopup);
+    return respondWith({ accounts: [account] }, isPopup, isApp2);
 
   } catch (err) {
     console.error("[auth-callback-ig] error:", err);
-    return respondWith({ error: err.message }, isPopup);
+    return respondWith({ error: err.message }, isPopup, isApp2);
   }
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function respondWith({ accounts, error }, isPopup) {
+function respondWith({ accounts, error }, isPopup, isApp2 = false) {
   if (isPopup) {
+    const msgType = isApp2 ? "OAUTH_APP2_ACCOUNTS" : "OAUTH_ACCOUNTS";
     const payload = accounts
-      ? JSON.stringify({ type: "OAUTH_ACCOUNTS", accounts })
-      : JSON.stringify({ type: "OAUTH_ERROR",    error: error || "Erro desconhecido" });
+      ? JSON.stringify({ type: msgType, accounts })
+      : JSON.stringify({ type: "OAUTH_ERROR", error: error || "Erro desconhecido" });
 
     const html = `<!DOCTYPE html>
 <html>
@@ -158,8 +166,8 @@ function respondWith({ accounts, error }, isPopup) {
 <div class="box">
   ${accounts
     ? `<div class="ok">✅</div>
-       <h2>${accounts[0]?.username ? "@" + accounts[0].username : "Conta"} conectada!</h2>
-       <p>Fechando automaticamente...</p>`
+       <h2>${isApp2 ? "App 2 vinculado!" : (accounts[0]?.username ? "@" + accounts[0].username : "Conta") + " conectada!"}</h2>
+       <p>${isApp2 ? "Fallback automático ativo para esta conta." : "Fechando automaticamente..."}</p>`
     : `<div class="ok">❌</div>
        <h2>Erro ao conectar</h2>
        <p>${error || "Tente novamente."}</p>`

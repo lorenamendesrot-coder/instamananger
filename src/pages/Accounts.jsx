@@ -250,10 +250,19 @@ function AccountCard({ acc, ins, isLoading, selectMode, isSelected, onToggleSele
           </div>
         )}
 
-        {/* Rodapé data */}
-        <div style={{ fontSize: 10, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ opacity: 0.6 }}>🗓</span>
-          Conectada em {new Date(acc.connected_at || Date.now()).toLocaleDateString("pt-BR")}
+        {/* Rodapé data + badge App2 */}
+        <div style={{ fontSize: 10, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4, justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ opacity: 0.6 }}>🗓</span>
+            Conectada em {new Date(acc.connected_at || Date.now()).toLocaleDateString("pt-BR")}
+          </div>
+          {acc.token_app2 && (
+            <span style={{
+              fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4,
+              background: "rgba(124,92,252,0.15)", color: "var(--accent-light)",
+              border: "1px solid rgba(124,92,252,0.3)", letterSpacing: "0.03em",
+            }}>⚡ APP2</span>
+          )}
         </div>
       </div>
     </div>
@@ -294,6 +303,38 @@ export default function Accounts() {
     onAccounts: async (accs) => {
       try { await addAccounts(accs); await reloadAccounts(); resetIg(); setAddMenuOpen(false); }
       catch (err) { alert("Erro ao salvar contas: " + err.message); resetIg(); }
+    },
+  });
+
+  // App 2 — fluxo Instagram Login
+  const { status: app2IgStatus, openPopupApp2: openIgPopupApp2, reset: resetApp2Ig } = useOAuthPopup({
+    flow: "instagram",
+    onAccounts: async (accs) => {
+      try { await addAccounts(accs); await reloadAccounts(); resetApp2Ig(); setAddMenuOpen(false); }
+      catch (err) { alert("Erro ao vincular App 2: " + err.message); resetApp2Ig(); }
+    },
+    onApp2Accounts: async (accs) => {
+      try { await addAccounts(accs); await reloadAccounts(); resetApp2Ig(); setAddMenuOpen(false); }
+      catch (err) { alert("Erro ao vincular App 2: " + err.message); resetApp2Ig(); }
+    },
+    onError: (err) => {
+      if (err === "app2_not_configured") alert("App 2 não configurado. Adicione VITE_META_APP_ID_2 nas variáveis de ambiente do Netlify.");
+    },
+  });
+
+  // App 2 — fluxo Facebook/Página
+  const { status: app2FbStatus, openPopupApp2: openFbPopupApp2, reset: resetApp2Fb } = useOAuthPopup({
+    flow: "facebook",
+    onAccounts: async (accs) => {
+      try { await addAccounts(accs); await reloadAccounts(); resetApp2Fb(); setAddMenuOpen(false); }
+      catch (err) { alert("Erro ao vincular App 2 (FB): " + err.message); resetApp2Fb(); }
+    },
+    onApp2Accounts: async (accs) => {
+      try { await addAccounts(accs); await reloadAccounts(); resetApp2Fb(); setAddMenuOpen(false); }
+      catch (err) { alert("Erro ao vincular App 2 (FB): " + err.message); resetApp2Fb(); }
+    },
+    onError: (err) => {
+      if (err === "app2_not_configured") alert("App 2 não configurado. Adicione VITE_META_APP_ID_2 nas variáveis de ambiente do Netlify.");
     },
   });
 
@@ -491,26 +532,37 @@ export default function Accounts() {
                   { label: "📘 Via Facebook", action: () => { openPopup(); }, loading: oauthStatus === "waiting" || oauthStatus === "saving", loadingLabel: oauthStatus === "waiting" ? "Aguardando..." : "Salvando..." },
                   { label: "🔑 Via Page ID", action: () => { setShowPageIdModal(true); setAddMenuOpen(false); }, loading: false },
                   { label: "🔐 Via Token direto", action: () => { setShowTokenModal(true); setAddMenuOpen(false); }, loading: false },
-                ].map((item, i) => (
+                  null, // separador
+                  { label: "⚡ App 2 via Instagram", action: () => { openIgPopupApp2(); setAddMenuOpen(false); }, loading: app2IgStatus === "waiting" || app2IgStatus === "saving", loadingLabel: app2IgStatus === "waiting" ? "Aguardando..." : "Salvando...", isApp2: true },
+                  { label: "⚡ App 2 via Facebook", action: () => { openFbPopupApp2(); setAddMenuOpen(false); }, loading: app2FbStatus === "waiting" || app2FbStatus === "saving", loadingLabel: app2FbStatus === "waiting" ? "Aguardando..." : "Salvando...", isApp2: true },
+                ].map((item, i) => {
+                  if (item === null) return (
+                    <div key={i} style={{ height: 1, background: "var(--border)", margin: "4px 8px" }} />
+                  );
+                  return (
                   <button
                     key={i}
                     onClick={item.action}
                     disabled={item.loading}
                     style={{
                       display: "flex", alignItems: "center", gap: 8, width: "100%",
-                      padding: "9px 12px", borderRadius: 8, background: "none",
-                      border: "none", color: "var(--text)", fontSize: 13, fontWeight: 500,
+                      padding: "9px 12px", borderRadius: 8,
+                      background: item.isApp2 ? "rgba(124,92,252,0.08)" : "none",
+                      border: item.isApp2 ? "1px solid rgba(124,92,252,0.2)" : "none",
+                      color: item.isApp2 ? "var(--accent-light)" : "var(--text)",
+                      fontSize: 13, fontWeight: item.isApp2 ? 600 : 500,
                       cursor: item.loading ? "default" : "pointer", opacity: item.loading ? 0.6 : 1,
                       transition: "background 0.12s",
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg3)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = item.isApp2 ? "rgba(124,92,252,0.15)" : "var(--bg3)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = item.isApp2 ? "rgba(124,92,252,0.08)" : "none"; }}
                   >
                     {item.loading
                       ? <><span className="spinner" style={{ width: 12, height: 12 }} /> {item.loadingLabel}</>
                       : item.label}
                   </button>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

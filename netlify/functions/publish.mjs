@@ -7,64 +7,28 @@ function isIGToken(t) { return t?.startsWith("IGAA"); }
 function graph(t)    { return isIGToken(t) ? GRAPH_IG : GRAPH_FB; }
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
-// ─── Configuração dos dois Apps Meta ─────────────────────────────────────────
-// App 1 (principal): META_APP_ID + META_APP_SECRET  (ou META_FB_APP_ID etc.)
-// App 2 (fallback) : META_APP_ID_2 + META_APP_SECRET_2
+// ─── Fallback de App Meta por Rate Limit ─────────────────────────────────────
+// Quando o App 1 bate no rate limit da Meta (erro #4, #32 ou #613), o sistema
+// usa automaticamente o token_app2 da conta (se disponível) para repostar.
 //
-// Códigos de erro que indicam rate limit a NÍVEL DE APLICATIVO (não de conta):
-//   4   → Application Request Limit Reached
-//   32  → Page-level throttling / app rate limit
-//   613 → Calls to this api have exceeded the rate limit
-// Quando detectados, o sistema tenta automaticamente renovar o token
-// do usuário usando o App 2 e repostar.
+// COMO FUNCIONA:
+//   • Cada conta pode ter dois tokens: access_token (App1) e token_app2 (App2).
+//   • token_app2 é gerado quando o usuário reconecta a conta pelo fluxo OAuth
+//     com o segundo app configurado (META_APP_ID_2 / META_APP_SECRET_2).
+//   • Na hora de postar, se App1 der erro #4/#32/#613, o publish tenta com
+//     token_app2 diretamente — sem nenhuma troca de token em tempo real,
+//     pois o App 1 estar bloqueado impediria isso também.
+//
+// COMO ADICIONAR O TOKEN DO APP 2 ÀS CONTAS:
+//   O auth-callback.mjs e auth-callback-ig.mjs precisam ser chamados com o
+//   segundo app configurado. O token retornado é salvo como token_app2
+//   na conta existente (identificada pelo mesmo instagram_id).
 
-const META_APP_CONFIGS = [
-  {
-    label:     "App1",
-    appId:     process.env.META_APP_ID     || process.env.META_FB_APP_ID,
-    appSecret: process.env.META_APP_SECRET || process.env.META_FB_APP_SECRET,
-  },
-  {
-    label:     "App2",
-    appId:     process.env.META_APP_ID_2,
-    appSecret: process.env.META_APP_SECRET_2,
-  },
-].filter(c => c.appId && c.appSecret);
-
-// Códigos Meta que indicam throttle a nível de aplicativo
+// Códigos Meta que indicam throttle a nível de APLICATIVO (não de conta)
 const APP_RATE_LIMIT_CODES = new Set([4, 32, 613]);
 
 function isAppRateLimitError(errorCode) {
   return APP_RATE_LIMIT_CODES.has(Number(errorCode));
-}
-
-// Troca um token existente pelo equivalente via outro app Meta.
-// Usa fb_exchange_token para obter um novo long-lived token emitido pelo App2.
-// Se o token for IGAA (Instagram Login), usa a API do Graph IG.
-async function exchangeTokenViaApp(currentToken, appConfig) {
-  try {
-    const { appId, appSecret } = appConfig;
-    if (isIGToken(currentToken)) {
-      // Instagram Login token → renova via Graph IG
-      const url = `${GRAPH_IG}/access_token?grant_type=ig_exchange_token&client_secret=${appSecret}&access_token=${currentToken}`;
-      const res  = await fetch(url);
-      const data = await res.json();
-      if (data.access_token) return data.access_token;
-      console.warn(`[publish] Troca IG token via ${appConfig.label} falhou:`, data.error?.message);
-      return null;
-    } else {
-      // Facebook/Page token → renova via Graph FB
-      const url = `${GRAPH_FB}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${currentToken}`;
-      const res  = await fetch(url);
-      const data = await res.json();
-      if (data.access_token) return data.access_token;
-      console.warn(`[publish] Troca FB token via ${appConfig.label} falhou:`, data.error?.message);
-      return null;
-    }
-  } catch (err) {
-    console.warn(`[publish] Erro ao trocar token via ${appConfig.label}:`, err.message);
-    return null;
-  }
 }
 
 // ─── Conversão de URL do Google Drive ────────────────────────────────────────
@@ -239,66 +203,43 @@ async function publishOneWithToken({ account, token, media_url, media_type, post
   return { success: true, media_id: pData.id, published_at: new Date().toISOString() };
 }
 
-// ─── Publicacao com fallback automático entre Apps ────────────────────────────
-// Tenta publicar com o App1 (token original). Se receber erro de rate limit
-// a nível de aplicativo (código 4, 32 ou 613), renova o token via App2 e
-// tenta novamente. Retorna qual app foi usado no campo `app_used`.
+// ─── Publicacao com fallback automático entre tokens de App ───────────────────
+// Tenta com access_token (App1). Se erro #4/#32/#613 e account.token_app2
+// existir, tenta novamente com token_app2 diretamente.
 async function publishOne({ account, media_url, media_type, post_type, caption }) {
-  const originalToken = account.access_token;
-  if (!originalToken) return { success: false, error: "Token nao encontrado. Reconecte a conta." };
+  const token1 = account.access_token;
+  const token2 = account.token_app2 || null;
 
-  // Lista de tentativas: começa com token original, depois tenta apps alternativos
-  const attempts = [{ token: originalToken, appLabel: META_APP_CONFIGS[0]?.label || "App1" }];
+  if (!token1) return { success: false, error: "Token nao encontrado. Reconecte a conta." };
 
-  // Pré-carrega tokens alternativos (App2, App3…) se configurados
-  // Só tenta o fallback se houver pelo menos 2 apps configurados
-  if (META_APP_CONFIGS.length >= 2) {
-    for (let i = 1; i < META_APP_CONFIGS.length; i++) {
-      attempts.push({ token: null, appConfig: META_APP_CONFIGS[i], appLabel: META_APP_CONFIGS[i].label });
-    }
-  }
+  // Tentativa 1: App 1 (token principal)
+  const result1 = await publishOneWithToken({ account, token: token1, media_url, media_type, post_type, caption });
 
-  let lastResult = null;
+  if (result1.success || result1.pending) return { ...result1, app_used: "App1" };
 
-  for (let i = 0; i < attempts.length; i++) {
-    let { token, appConfig, appLabel } = attempts[i];
-
-    // Para tentativas de fallback, obtém o token via exchange com o app alternativo
-    if (token === null && appConfig) {
-      console.log(`[publish] 🔄 @${account.username}: tentando fallback via ${appLabel} (rate limit do app anterior)`);
-      token = await exchangeTokenViaApp(originalToken, appConfig);
-      if (!token) {
-        console.warn(`[publish] @${account.username}: não foi possível obter token via ${appLabel}, pulando`);
-        continue;
-      }
-    }
-
+  // Se foi rate limit do app E temos token do App 2 → tenta fallback
+  if (isAppRateLimitError(result1.errorCode) && token2) {
+    console.warn(`[publish] ⚠️ @${account.username}: rate limit App1 (código ${result1.errorCode}) — tentando App2`);
     try {
-      const result = await publishOneWithToken({ account, token, media_url, media_type, post_type, caption });
-      lastResult = result;
-
-      // Sucesso ou erro não relacionado ao rate limit do app → retorna imediatamente
-      if (result.success || result.pending) {
-        if (i > 0) console.log(`[publish] ✅ @${account.username}: publicado via ${appLabel} (fallback)`);
-        return { ...result, app_used: appLabel };
+      const result2 = await publishOneWithToken({ account, token: token2, media_url, media_type, post_type, caption });
+      if (result2.success || result2.pending) {
+        console.log(`[publish] ✅ @${account.username}: publicado via App2 (fallback)`);
+        return { ...result2, app_used: "App2" };
       }
-
-      // Erro de rate limit a nível de app → tenta próximo app
-      if (isAppRateLimitError(result.errorCode) && i < attempts.length - 1) {
-        console.warn(`[publish] ⚠️ @${account.username}: rate limit do ${appLabel} (código ${result.errorCode}) — tentando ${attempts[i + 1]?.appLabel}`);
-        continue;
-      }
-
-      // Outro erro → retorna sem tentar fallback
-      return { ...result, app_used: appLabel };
-
+      // App2 também falhou — retorna o erro do App2 mas informa que os dois falharam
+      return { ...result2, app_used: "App2_fallback_failed", originalError: result1.error };
     } catch (err) {
-      lastResult = { success: false, error: err.message };
-      if (i < attempts.length - 1) continue;
+      return { success: false, error: err.message, app_used: "App2_fallback_error", originalError: result1.error };
     }
   }
 
-  return { ...(lastResult || { success: false, error: "Falha em todas as tentativas" }), app_used: "none" };
+  // Erro não relacionado a rate limit de app, ou sem token_app2 → retorna resultado original
+  if (isAppRateLimitError(result1.errorCode) && !token2) {
+    console.warn(`[publish] ⚠️ @${account.username}: rate limit App1 — sem token_app2 configurado para esta conta`);
+    return { ...result1, app_used: "App1", hint: "Reconecte esta conta pelo App2 para habilitar o fallback automático." };
+  }
+
+  return { ...result1, app_used: "App1" };
 }
 
 // ─── Processa uma conta (rate-limit + publish) ────────────────────────────────
