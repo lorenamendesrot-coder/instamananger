@@ -426,7 +426,7 @@ function QualitySelect({ value, onChange }) {
 
 // ─── Card Mobile ──────────────────────────────────────────────────────────────
 
-function AccountCard({ acc, onFieldChange, onDelete, onCopyAll, onMoveToMain }) {
+function AccountCard({ acc, onFieldChange, onDelete, onCopyAll, onMoveToMain, selectMode, isSelected, onToggleSelect }) {
   const debounceRef = useRef({});
   const [expanded, setExpanded] = useState(false);
   const si = statusInfo(acc.status);
@@ -444,11 +444,21 @@ function AccountCard({ acc, onFieldChange, onDelete, onCopyAll, onMoveToMain }) 
       border: `1px solid ${expanded ? si.color + "40" : "var(--border)"}`,
       borderRadius: 12, marginBottom: 10, overflow: "hidden", transition: "border-color 0.2s",
     }}>
-      <div onClick={() => setExpanded((e) => !e)} style={{
+      <div onClick={() => selectMode ? onToggleSelect(acc.id) : setExpanded((e) => !e)} style={{
         display: "flex", alignItems: "center", gap: 10,
         padding: "12px 14px", cursor: "pointer",
-        background: expanded ? si.color + "08" : "transparent",
+        background: isSelected ? "rgba(239,68,68,0.07)" : expanded ? si.color + "08" : "transparent",
       }}>
+        {selectMode && (
+          <div style={{
+            width: 17, height: 17, borderRadius: 5, flexShrink: 0,
+            border: `2px solid ${isSelected ? "var(--danger)" : "var(--border2)"}`,
+            background: isSelected ? "var(--danger)" : "transparent",
+            display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.15s",
+          }}>
+            {isSelected && <span style={{ color: "#fff", fontSize: 10, fontWeight: 900 }}>✓</span>}
+          </div>
+        )}
         <div style={{ width: 8, height: 8, borderRadius: "50%", background: si.color, flexShrink: 0 }} />
         <span style={{ fontWeight: 700, fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {acc.username ? `@${acc.username}` : <span style={{ color: "var(--muted)" }}>sem username</span>}
@@ -507,7 +517,7 @@ function AccountCard({ acc, onFieldChange, onDelete, onCopyAll, onMoveToMain }) 
 
 // ─── Linha Desktop ────────────────────────────────────────────────────────────
 
-function AccountRow({ acc, idx, onFieldChange, onDelete, onCopyAll, onMoveToMain }) {
+function AccountRow({ acc, idx, onFieldChange, onDelete, onCopyAll, onMoveToMain, selectMode, isSelected, onToggleSelect }) {
   const debounceRef = useRef({});
   const [localToken, setLocalToken] = useState(acc.token2fa || "");
 
@@ -518,14 +528,29 @@ function AccountRow({ acc, idx, onFieldChange, onDelete, onCopyAll, onMoveToMain
   const handleImmediate = (field, value) => onFieldChange(acc.id, field, value);
 
   const si    = statusInfo(acc.status);
-  const rowBg = idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)";
+  const rowBg = isSelected ? "rgba(239,68,68,0.06)" : idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)";
 
   return (
     <tr style={{ borderBottom: "1px solid var(--border)", transition: "background 0.1s" }}>
       {/* Username */}
       <td style={{ padding: "10px 12px", background: rowBg }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <div style={{ width: 6, height: 6, borderRadius: "50%", background: si.color, flexShrink: 0 }} />
+          {selectMode ? (
+            <div
+              onClick={() => onToggleSelect(acc.id)}
+              style={{
+                width: 17, height: 17, borderRadius: 5, flexShrink: 0,
+                border: `2px solid ${isSelected ? "var(--danger)" : "var(--border2)"}`,
+                background: isSelected ? "var(--danger)" : "transparent",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                cursor: "pointer", transition: "all 0.15s",
+              }}
+            >
+              {isSelected && <span style={{ color: "#fff", fontSize: 10, fontWeight: 900 }}>✓</span>}
+            </div>
+          ) : (
+            <div style={{ width: 6, height: 6, borderRadius: "50%", background: si.color, flexShrink: 0 }} />
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 5, flex: 1, minWidth: 0 }}>
             <input type="text" defaultValue={acc.username} onChange={(e) => handleDebounced("username", e.target.value)}
               placeholder="@username" style={{ fontSize: 12, padding: "4px 8px", fontWeight: 600, flex: 1, minWidth: 80 }} />
@@ -585,6 +610,8 @@ export default function Contingency() {
   const [importing,    setImporting]   = useState(false);
   const [isMobile,     setIsMobile]    = useState(false);
   const [drivePickerOpen, setDrivePickerOpen] = useState(false);
+  const [selected,     setSelected]    = useState(new Set()); // ids selecionados para exclusão em lote
+  const [selectMode,   setSelectMode]  = useState(false);     // modo seleção ativo
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -713,12 +740,6 @@ export default function Contingency() {
     showToast("error", "⚠️ Função futura. Por enquanto copie as credenciais e conecte manualmente.");
   }, [showToast]);
 
-  const handleAddEmpty = useCallback(async () => {
-    const now = new Date().toISOString();
-    await saveAccount({ id: uid(), username:"", senha:"", token2fa:"", nome:"", status:"preparada", qualidade:"boa", notas:"", created_at:now, updated_at:now });
-    showToast("success", "✏️ Nova conta adicionada.");
-  }, [saveAccount, showToast]);
-
   const filtered = accounts.filter((a) => {
     const q = search.toLowerCase();
     return (!q || (a.username||"").toLowerCase().includes(q) || (a.nome||"").toLowerCase().includes(q))
@@ -728,6 +749,39 @@ export default function Contingency() {
   const counts = STATUS_OPTIONS.reduce((acc, s) => {
     acc[s.value] = accounts.filter((a) => a.status === s.value).length; return acc;
   }, {});
+
+  // ── Seleção em lote ──────────────────────────────────────────────────────────
+  const toggleSelectMode = useCallback(() => {
+    setSelectMode((v) => { if (v) setSelected(new Set()); return !v; });
+  }, []);
+
+  const toggleSelectOne = useCallback((id) => {
+    setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }, []);
+
+  const selectAllFiltered = useCallback(() => {
+    setSelected(new Set(filtered.map((a) => a.id)));
+  }, [filtered]);
+
+  const deselectAll = useCallback(() => setSelected(new Set()), []);
+
+  const handleDeleteSelected = useCallback(async () => {
+    if (!selected.size) return;
+    const names = accounts.filter((a) => selected.has(a.id)).map((a) => `@${a.username||a.id}`);
+    const preview = names.slice(0, 5).join(", ") + (names.length > 5 ? ` e mais ${names.length - 5}` : "");
+    if (!window.confirm(`Excluir ${selected.size} conta(s)?\n\n${preview}`)) return;
+    const ids = [...selected];
+    await Promise.all(ids.map((id) => ctgDelete(id)));
+    setAccounts((prev) => prev.filter((a) => !selected.has(a.id)));
+    setSelected(new Set());
+    showToast("success", `🗑️ ${ids.length} conta(s) excluída(s).`);
+  }, [selected, accounts, showToast]);
+
+  const handleAddEmpty = useCallback(async () => {
+    const now = new Date().toISOString();
+    await saveAccount({ id: uid(), username:"", senha:"", token2fa:"", nome:"", status:"preparada", qualidade:"boa", notas:"", created_at:now, updated_at:now });
+    showToast("success", "✏️ Nova conta adicionada.");
+  }, [saveAccount, showToast]);
 
   return (
     <div style={{ padding: isMobile ? "16px 12px" : "24px 28px", maxWidth: 1400, margin: "0 auto" }}>
@@ -756,6 +810,15 @@ export default function Contingency() {
           </div>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
             <button className="btn btn-ghost btn-sm" onClick={handleAddEmpty}>{isMobile ? "➕" : "➕ Adicionar"}</button>
+            {accounts.length > 0 && (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={toggleSelectMode}
+                style={{ color: selectMode ? "var(--danger)" : "var(--muted)", borderColor: selectMode ? "rgba(239,68,68,0.4)" : undefined }}
+              >
+                {selectMode ? "✕ Cancelar" : (isMobile ? "☑️" : "☑️ Selecionar")}
+              </button>
+            )}
             <button className="btn btn-primary btn-sm" onClick={() => fileInputRef.current?.click()} disabled={importing}>
               {importing ? <><span className="spinner" style={{ width:11,height:11,borderTopColor:"#fff" }} /> Importando...</> : isMobile ? "📥 Arquivo" : "📥 Importar CSV/XLSX"}
             </button>
@@ -776,6 +839,56 @@ export default function Contingency() {
           </div>
         </div>
       </div>
+
+      {/* Barra de seleção em lote */}
+      {selectMode && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          marginBottom: 14, padding: "10px 14px",
+          background: selected.size > 0 ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.04)",
+          border: `1px solid ${selected.size > 0 ? "rgba(239,68,68,0.3)" : "var(--border)"}`,
+          borderRadius: 10, transition: "all 0.2s",
+        }}>
+          {/* Checkbox selecionar tudo */}
+          <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", userSelect: "none", fontSize: 13, fontWeight: 600 }}>
+            <div
+              onClick={selected.size === filtered.length ? deselectAll : selectAllFiltered}
+              style={{
+                width: 18, height: 18, borderRadius: 5, flexShrink: 0,
+                border: `2px solid ${selected.size === filtered.length ? "var(--danger)" : "var(--border2)"}`,
+                background: selected.size === filtered.length ? "var(--danger)" : selected.size > 0 ? "rgba(239,68,68,0.3)" : "transparent",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                cursor: "pointer", transition: "all 0.15s",
+              }}
+            >
+              {selected.size === filtered.length && <span style={{ color: "#fff", fontSize: 11, fontWeight: 900 }}>✓</span>}
+              {selected.size > 0 && selected.size < filtered.length && <span style={{ color: "#fff", fontSize: 14, lineHeight: 1, marginTop: -1 }}>—</span>}
+            </div>
+            <span style={{ color: selected.size > 0 ? "var(--text)" : "var(--muted)" }}>
+              {selected.size > 0 ? `${selected.size} selecionada${selected.size !== 1 ? "s" : ""}` : "Nenhuma selecionada"}
+            </span>
+          </label>
+
+          <div style={{ display: "flex", gap: 6, marginLeft: "auto", flexWrap: "wrap" }}>
+            <button className="btn btn-ghost btn-sm" onClick={selectAllFiltered} style={{ fontSize: 11 }}>
+              ✓ Todas ({filtered.length})
+            </button>
+            {selected.size > 0 && (
+              <button className="btn btn-ghost btn-sm" onClick={deselectAll} style={{ fontSize: 11 }}>
+                ✕ Limpar
+              </button>
+            )}
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={handleDeleteSelected}
+              disabled={selected.size === 0}
+              style={{ fontSize: 11, opacity: selected.size === 0 ? 0.4 : 1 }}
+            >
+              🗑️ Excluir {selected.size > 0 ? `(${selected.size})` : "selecionadas"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Resumo */}
       <div style={{ display:"flex", gap:8, marginBottom:16, overflowX: isMobile?"auto":"visible", flexWrap: isMobile?"nowrap":"wrap", paddingBottom: isMobile?4:0 }}>
@@ -831,7 +944,7 @@ export default function Contingency() {
         isMobile ? (
           <div>
             {filtered.map((acc) => (
-              <AccountCard key={acc.id} acc={acc} onFieldChange={handleFieldChange} onDelete={handleDelete} onCopyAll={handleCopyAll} onMoveToMain={handleMoveToMain} />
+              <AccountCard key={acc.id} acc={acc} onFieldChange={handleFieldChange} onDelete={handleDelete} onCopyAll={handleCopyAll} onMoveToMain={handleMoveToMain} selectMode={selectMode} isSelected={selected.has(acc.id)} onToggleSelect={toggleSelectOne} />
             ))}
           </div>
         ) : (
@@ -846,7 +959,7 @@ export default function Contingency() {
               </thead>
               <tbody>
                 {filtered.map((acc, idx) => (
-                  <AccountRow key={acc.id} acc={acc} idx={idx} onFieldChange={handleFieldChange} onDelete={handleDelete} onCopyAll={handleCopyAll} onMoveToMain={handleMoveToMain} />
+                  <AccountRow key={acc.id} acc={acc} idx={idx} onFieldChange={handleFieldChange} onDelete={handleDelete} onCopyAll={handleCopyAll} onMoveToMain={handleMoveToMain} selectMode={selectMode} isSelected={selected.has(acc.id)} onToggleSelect={toggleSelectOne} />
                 ))}
               </tbody>
             </table>
