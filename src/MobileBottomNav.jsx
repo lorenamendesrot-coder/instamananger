@@ -5,7 +5,7 @@ const NAV = [
   { to: "/perfis",        label: "Perfis",      icon: "🪪" },
   { to: "/aquecimento",   label: "Aquecimento", icon: "🔥" },
   { to: "/fila",          label: "Fila",        icon: "🗂️" },
-  { to: "/historico",     label: "Histórico",   icon: "📋" },
+  { to: "/contingencia",  label: "Backup",      icon: "🛡️" },
   { to: "/configuracoes", label: "Config",      icon: "⚙️" },
 ];
 

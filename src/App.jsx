@@ -8,6 +8,7 @@ import History  from "./pages/History.jsx";
 import Warmup   from "./pages/Warmup.jsx";
 import Settings  from "./pages/Settings.jsx";
 import Profiles  from "./components/Profiles/Profiles.jsx";
+import Contingency from "./pages/Contingency.jsx";
 
 import { useAccounts }   from "./useAccounts.js";
 import { useToast }      from "./useToast.js";
@@ -526,6 +527,7 @@ function AppShell() {
             <Route path="/fila"           element={<Queue />} />
             <Route path="/historico"      element={<History />} />
             <Route path="/aquecimento"    element={<Warmup />} />
+            <Route path="/contingencia"   element={<Contingency />} />
             <Route path="/configuracoes"  element={<Settings />} />
           </Routes>
         </main>
