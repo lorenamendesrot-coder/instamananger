@@ -116,29 +116,10 @@ export default async function handler(req) {
         };
       });
 
-      const body    = JSON.stringify(slim);
-      const encoder = new TextEncoder();
-      const bytes   = encoder.encode(body);
+      const body = JSON.stringify(slim);
 
-      // Gzip se o cliente aceitar (todos os browsers modernos aceitam)
-      const acceptEncoding = req.headers.get ? req.headers.get("accept-encoding") || "" : "";
-      if (acceptEncoding.includes("gzip") && typeof CompressionStream !== "undefined") {
-        const cs     = new CompressionStream("gzip");
-        const writer = cs.writable.getWriter();
-        writer.write(bytes);
-        writer.close();
-        const compressed = await new Response(cs.readable).arrayBuffer();
-        return new Response(compressed, {
-          status: 200,
-          headers: {
-            ...corsHeaders(req),
-            "Content-Encoding": "gzip",
-            "Content-Type":     "application/json",
-          },
-        });
-      }
-
-      // Fallback sem compressão
+      // Retorna sem compressão manual — Netlify CDN comprime automaticamente no edge
+      // CompressionStream causava ERR_HTTP2_PROTOCOL_ERROR em algumas versões do Node
       return new Response(body, {
         status: 200,
         headers: { ...corsHeaders(req), "Content-Type": "application/json" },

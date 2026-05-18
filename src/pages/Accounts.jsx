@@ -355,13 +355,15 @@ export default function Accounts() {
 
   const fetchProfile = useCallback(async (acc, force = false) => {
     if (!force && (loadingInsRef.current[acc.id] || profileRef.current[acc.id])) return;
-    if (!acc.access_token) return;
+    // Suporta token_app2 (contas conectadas via App 2 pelo Facebook)
+    const token = acc.access_token || acc.token_app2;
+    if (!token) return;
     setLoadingIns((p) => ({ ...p, [acc.id]: true }));
     try {
       const res  = await fetch("/api/account-insights", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instagram_id: acc.id, access_token: acc.access_token }),
+        body: JSON.stringify({ instagram_id: acc.id, access_token: token }),
       });
       const json = await res.json();
       if (res.ok && !json.error) {
@@ -372,8 +374,14 @@ export default function Accounts() {
           profile_picture: json.profile_picture || acc.profile_picture,
           followers_count: json.followers_count ?? acc.followers_count,
           media_count:     json.media_count     ?? acc.media_count,
+          updated_at:      new Date().toISOString(),
         };
-        await dbPut("sessions", updatedAcc);
+        // Salva via API (Netlify Blobs) em vez de IndexedDB local
+        await fetch("/api/accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accounts: [updatedAcc] }),
+        }).catch(() => {});
         setProfileData((p) => ({ ...p, [acc.id]: json }));
         return { id: acc.id, data: json };
       }
