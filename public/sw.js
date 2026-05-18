@@ -371,14 +371,25 @@ async function maybeCloseParentItem(historyId, currentVfId, currentVfStatus) {
       // Atualiza IDB
       await updateItem(parent.id, { status: "posted", results, completedAt: new Date().toISOString(), allSuccess: allOk });
 
-      // Atualiza Blob
-      await fetch(`${self.location.origin}/api/queue`, {
-        method:  "PUT",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify(updatedParent),
-      });
+      // Atualiza Blob — com retry para sobreviver a ERR_HTTP2_PROTOCOL_ERROR
+      let blobOk = false;
+      for (let attempt = 0; attempt < 4 && !blobOk; attempt++) {
+        try {
+          if (attempt > 0) await sleep(800 * attempt);
+          const r = await fetch(`${self.location.origin}/api/queue`, {
+            method:  "PUT",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify(updatedParent),
+          });
+          if (r.ok) blobOk = true;
+        } catch (_) {}
+      }
+      if (!blobOk) console.warn(`[SW] ⚠️ Blob PUT falhou após 4 tentativas — pai ${parent.id}`);
 
-      console.log(`[SW] ✅ pai ${parent.id} → posted (${ok}/${total})`);
+      // Notifica clientes com o item já atualizado para o frontend não precisar refazer GET
+      notifyClients({ type: "ITEM_POSTED", item: updatedParent });
+
+      console.log(`[SW] ✅ pai ${parent.id} → posted (${ok}/${total}) | blob:${blobOk}`);
     }
 
     notifyClients({ type: "QUEUE_UPDATE" });
