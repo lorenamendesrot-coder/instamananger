@@ -143,14 +143,27 @@ export default function Queue() {
   }, [updateItem, reloadQueue]);
 
   const hasPendingChildren = videoFinish.some(v=>v.status==="pending"||v.status==="running") || perAccount.some(p=>p.status==="pending"||p.status==="running");
-  const pollRef = useRef(null);
+  const pollRef   = useRef(null);
+  const lastFetch = useRef(0);
+  // Polling reduzido para 30s — o SW já notifica via sw:queue-update quando algo muda
+  // 8s causava acúmulo de requests junto com os PUTs do SW (request limit)
   useEffect(() => {
-    if (hasPendingChildren) pollRef.current = setInterval(reloadQueue, 8000);
+    if (hasPendingChildren) pollRef.current = setInterval(reloadQueue, 30000);
     else clearInterval(pollRef.current);
     return () => clearInterval(pollRef.current);
   }, [hasPendingChildren, reloadQueue]);
 
-  useEffect(() => { const h=()=>reloadQueue?.(); window.addEventListener("sw:queue-update",h); return ()=>window.removeEventListener("sw:queue-update",h); }, [reloadQueue]);
+  useEffect(() => {
+    // Throttle: ignora eventos sw:queue-update se o último fetch foi há menos de 10s
+    const h = () => {
+      const now = Date.now();
+      if (now - lastFetch.current < 10000) return;
+      lastFetch.current = now;
+      reloadQueue?.();
+    };
+    window.addEventListener("sw:queue-update", h);
+    return () => window.removeEventListener("sw:queue-update", h);
+  }, [reloadQueue]);
   useEffect(() => { reloadQueue?.(); }, []);
 
   const openEdit = (item) => {

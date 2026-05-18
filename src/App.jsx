@@ -156,7 +156,16 @@ function SchedulerProvider({ addEntry, children }) {
 
   useEffect(() => {
     reload();
-    const h = () => reload();
+    // Throttle: ignora eventos sw:queue-update repetidos em menos de 15s
+    // O SW emite este evento a cada tick (20s) + a cada video_finish — sem throttle
+    // isso causa 3-5 requests/min desnecessários ao Netlify Blob
+    let lastReload = 0;
+    const h = () => {
+      const now = Date.now();
+      if (now - lastReload < 15000) return;
+      lastReload = now;
+      reload();
+    };
     window.addEventListener("sw:queue-update", h);
 
     // Atualização cirúrgica: recebe item já com status "posted" direto do SW
