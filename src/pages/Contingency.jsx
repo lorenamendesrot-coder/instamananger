@@ -14,7 +14,63 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { dbGetAll, dbPut, dbDelete } from "../useDB.js";
+
+
+// ─── DB local para garantir que a store "contingency" existe ──────────────────
+// Isso evita erro caso o useDB.js ainda não tenha rodado o upgrade para v6
+// (ex: browser com IndexedDB travado na versão antiga).
+let _ctgDb = null;
+async function openContingencyDB() {
+  if (_ctgDb) return _ctgDb;
+  return new Promise((resolve, reject) => {
+    // Abre na versão atual do banco — se já existir em versão maior, usa ela
+    const probe = indexedDB.open("insta_manager");
+    probe.onsuccess = () => {
+      const currentVersion = probe.result.version;
+      probe.result.close();
+      // Precisa criar a store? Faz upgrade
+      const targetVersion = Math.max(currentVersion, 6);
+      const req = indexedDB.open("insta_manager", targetVersion);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains("contingency")) {
+          db.createObjectStore("contingency", { keyPath: "id" });
+        }
+      };
+      req.onsuccess = () => { _ctgDb = req.result; resolve(_ctgDb); };
+      req.onerror  = () => reject(req.error);
+    };
+    probe.onerror = () => reject(probe.error);
+  });
+}
+
+async function ctgGetAll() {
+  const db = await openContingencyDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction("contingency", "readonly");
+    const req = tx.objectStore("contingency").getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror   = () => reject(req.error);
+  });
+}
+async function ctgPut(item) {
+  const db = await openContingencyDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("contingency", "readwrite");
+    tx.objectStore("contingency").put(item);
+    tx.oncomplete = resolve;
+    tx.onerror    = reject;
+  });
+}
+async function ctgDelete(id) {
+  const db = await openContingencyDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("contingency", "readwrite");
+    tx.objectStore("contingency").delete(id);
+    tx.oncomplete = resolve;
+    tx.onerror    = reject;
+  });
+}
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -79,11 +135,11 @@ function parseCSV(text) {
   const sep = lines[0].includes(";") ? ";" : ",";
 
   const rawHeaders = lines[0].split(sep).map((h) => h.trim().toLowerCase().replace(/[^a-z0-9_]/g, ""));
-  const COL_MAP    = { username: ["username", "user", "login", "usuario"],
-                       senha:    ["senha", "password", "pass", "pw"],
-                       token2fa: ["token2fa", "token", "2fa", "otp", "totp"],
-                       email:    ["email", "mail", "e-mail"],
-                       nome:     ["nome", "name", "display"] };
+  const COL_MAP    = { username: ["username", "user", "login", "usuario", "conta", "account", "perfil"],
+                       senha:    ["senha", "password", "pass", "pw", "secret"],
+                       token2fa: ["token2fa", "token", "2fa", "otp", "totp", "chave2fa"],
+                       email:    ["email", "mail", "correo"],
+                       nome:     ["nome", "name", "display", "apelido"] };
 
   // Mapeia coluna CSV → chave interna
   const colIndex = {};
@@ -247,7 +303,7 @@ export default function Contingency() {
   /** Carrega todas as contas do IndexedDB na store "contingency" */
   const loadAccounts = useCallback(async () => {
     try {
-      const all = await dbGetAll(STORE);
+      const all = await ctgGetAll();
       // Ordena por data de criação (mais recente primeiro)
       all.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
       setAccounts(all);
@@ -263,7 +319,7 @@ export default function Contingency() {
   /** Persiste uma conta no DB e atualiza o estado local */
   const saveAccount = useCallback(async (account) => {
     const updated = { ...account, updated_at: new Date().toISOString() };
-    await dbPut(STORE, updated);
+    await ctgPut(updated);
     setAccounts((prev) => {
       const idx = prev.findIndex((a) => a.id === updated.id);
       if (idx === -1) return [updated, ...prev];
@@ -276,7 +332,7 @@ export default function Contingency() {
 
   /** Remove uma conta do DB e do estado local */
   const deleteAccount = useCallback(async (id) => {
-    await dbDelete(STORE, id);
+    await ctgDelete(id);
     setAccounts((prev) => prev.filter((a) => a.id !== id));
   }, []);
 
