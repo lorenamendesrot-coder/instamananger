@@ -435,7 +435,8 @@ export default function Queue() {
 }
 
 // ─── Helpers de cor por status ────────────────────────────────────────────────
-function statusStyle(status) {
+function statusStyle(status, partial) {
+  if (status === "posted" && partial) return { color: "var(--warning)",  bg: "rgba(245,158,11,0.15)", border: "rgba(245,158,11,0.5)",  icon: "⚠️" };
   if (status === "posted")  return { color: "var(--success)", bg: "rgba(34,197,94,0.15)",  border: "rgba(34,197,94,0.5)",  icon: "✅", label: "Postado com Sucesso" };
   if (status === "done")    return { color: "var(--success)", bg: "rgba(34,197,94,0.10)",  border: "rgba(34,197,94,0.25)",  icon: "✅", label: "Publicado" };
   if (status === "error")   return { color: "var(--danger)",  bg: "rgba(239,68,68,0.10)",  border: "rgba(239,68,68,0.25)",  icon: "❌" };
@@ -515,15 +516,6 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   const effectiveStatus = isPublishing ? "running" : item.status;
   // isPast: horário passou, ainda pending, nunca rodou — badge laranja
   const isOverdue = item.status === "pending" && item.scheduledAt < Date.now() && !item.runCount && (item.results || []).length === 0;
-  const ss = isOverdue
-    ? { color: "var(--warning)", bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.30)", icon: "⚠" }
-    : statusStyle(effectiveStatus);
-
-  const scheduledDate = new Date(item.scheduledAt);
-  const isPast        = isOverdue; // alias mantido para compatibilidade
-  const mediaCount    = item.mediaUrls?.length || 1;
-  const qty           = item.quantityPerCycle || 1;
-  const thumbUrl      = item.mediaType === "IMAGE" ? item.mediaUrl : null;
 
   // Resultados
   const results  = item.results || [];
@@ -531,6 +523,14 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   const resFail  = results.filter(r => !r.success && !r.retrying);
   const resRetry = results.filter(r => !r.success && r.retrying);
   const hasResults = results.length > 0;
+
+  // "Parcial" = postado mas com pelo menos 1 falha entre as contas
+  const isPartial = (effectiveStatus === "posted" || effectiveStatus === "done") && resFail.length > 0 && resOk.length > 0;
+  const isAllFail = (effectiveStatus === "posted" || effectiveStatus === "done") && resFail.length > 0 && resOk.length === 0;
+
+  const ss = isOverdue
+    ? { color: "var(--warning)", bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.30)", icon: "⚠" }
+    : statusStyle(effectiveStatus, isPartial || isAllFail);
 
   // Progresso de publicação em curso
   const vfDone  = (vfItems  || []).filter(v => v.status === "done").length;
@@ -554,10 +554,12 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   if (isPublishing && isGroup && hasActivePa)  statusLabel = `Publicando ${paDone}/${paTotal}`;
   else if (isPublishing && hasActivePa)        statusLabel = `Publicando ${vfDone}/${vfTotal}`;
   else if (isPublishing && hasActiveVf)        statusLabel = `🎬 Processando vídeos ${vfDone}/${vfTotal}`;
-  else if (effectiveStatus === "posted")  statusLabel = "✅ Postado com Sucesso!";
-  else if (effectiveStatus === "done")    statusLabel = "Publicado";
-  else if (effectiveStatus === "error")   statusLabel = "Erro";
-  else if (effectiveStatus === "running") statusLabel = "Rodando";
+  else if (isAllFail)                          statusLabel = `❌ Falhou em todas (${resFail.length})`;
+  else if (isPartial)                          statusLabel = `⚠️ ${resOk.length} publicado${resOk.length > 1 ? "s" : ""} · ${resFail.length} erro${resFail.length > 1 ? "s" : ""}`;
+  else if (effectiveStatus === "posted")       statusLabel = "✅ Postado com Sucesso!";
+  else if (effectiveStatus === "done")         statusLabel = "Publicado";
+  else if (effectiveStatus === "error")        statusLabel = "Erro";
+  else if (effectiveStatus === "running")      statusLabel = "Rodando";
   else if (item.status === "posted" && item.loop) {
     const nextMs = item.scheduledAt - Date.now();
     if (nextMs > 0) {
@@ -576,12 +578,12 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   return (
     <div style={{
       borderRadius: 10,
-      border:     `1px solid ${isSelected ? "var(--accent)" : isPosted ? "rgba(34,197,94,0.5)" : ss.border}`,
-      borderLeft: `${isPosted ? "4px" : "3px"} solid ${isSelected ? "var(--accent)" : ss.color}`,
-      background: isSelected ? "rgba(124,92,252,0.07)" : isPosted ? "rgba(34,197,94,0.07)" : "var(--bg2)",
+      border:     `1px solid ${isSelected ? "var(--accent)" : (isPartial || isAllFail) ? "rgba(245,158,11,0.5)" : isPosted ? "rgba(34,197,94,0.5)" : ss.border}`,
+      borderLeft: `${(isPosted || isPartial || isAllFail) ? "4px" : "3px"} solid ${isSelected ? "var(--accent)" : ss.color}`,
+      background: isSelected ? "rgba(124,92,252,0.07)" : isPartial ? "rgba(245,158,11,0.05)" : isAllFail ? "rgba(239,68,68,0.05)" : isPosted ? "rgba(34,197,94,0.07)" : "var(--bg2)",
       overflow: "hidden",
       transition: "all 0.15s",
-      boxShadow: isPosted ? "0 0 0 1px rgba(34,197,94,0.15)" : "none",
+      boxShadow: isPosted && !isPartial && !isAllFail ? "0 0 0 1px rgba(34,197,94,0.15)" : (isPartial || isAllFail) ? "0 0 0 1px rgba(245,158,11,0.10)" : "none",
     }}>
 
       {/* ── Linha principal ── */}
