@@ -12,7 +12,7 @@
 //   7. Retornamos postMessage ao popup pai
 
 const IG_AUTH  = "https://api.instagram.com";
-const IG_GRAPH = "https://graph.instagram.com";
+const IG_GRAPH = "https://graph.instagram.com/v21.0";
 
 // Campos suportados pelo Instagram Business Login (ig_biz_login_oauth).
 // account_type NÃO é suportado neste fluxo — causa "Unsupported request - method type: get"
@@ -93,7 +93,8 @@ export const handler = async (event) => {
 
     // ── 2. Trocar por token de LONGA duração (60 dias) ─────────────────────
     const longData = await apiFetch(
-      `${IG_GRAPH}/access_token?grant_type=ig_exchange_token&client_secret=${APP_SECRET}&access_token=${shortToken}`
+      `${IG_GRAPH}/access_token?grant_type=ig_exchange_token&client_secret=${APP_SECRET}&access_token=${shortToken}`,
+      { headers: { "Authorization": `Bearer ${shortToken}` } }
     );
 
     const longToken   = longData.access_token || shortToken;
@@ -104,8 +105,10 @@ export const handler = async (event) => {
     const tokenDuration = longData.access_token ? "long-lived" : "short-lived";
 
     // ── 3. Buscar perfil da conta ──────────────────────────────────────────
+    // Novo Instagram Business Login: token vai no header Authorization, não na query string
     const profile = await apiFetch(
-      `${IG_GRAPH}/me?fields=${IG_FIELDS}&access_token=${longToken}`
+      `${IG_GRAPH}/me?fields=${IG_FIELDS}`,
+      { headers: { "Authorization": `Bearer ${longToken}` } }
     );
 
     if (profile.error) {
