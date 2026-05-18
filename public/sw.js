@@ -215,7 +215,8 @@ async function runVideoFinish(item) {
         });
       }
 
-      // Remove da fila de video_finish
+      // Remove da fila de video_finish (evita acúmulo que causa ERR_HTTP2_PROTOCOL_ERROR)
+      await deleteItemFromBlob(item.id);
       await updateItem(item.id, { status: "done", result, finishedAt: new Date().toISOString() });
       console.log(`[SW] video_finish ✅ @${item.username} media_id:${result.media_id}`);
 
@@ -269,6 +270,7 @@ async function runVideoFinish(item) {
         await saveItem("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
       }
 
+      await deleteItemFromBlob(item.id);
       await updateItem(item.id, { status: "error", error: errMsg });
       await maybeCloseParentItem(item.historyId, item.id, "error");
       notifyClients({ type: "QUEUE_UPDATE" });
@@ -288,6 +290,7 @@ async function runVideoFinish(item) {
           );
           await saveItem("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
         }
+        await deleteItemFromBlob(item.id);
         await updateItem(item.id, { status: "error", error: errMsg });
         await maybeCloseParentItem(item.historyId, item.id, "error");
         notifyClients({ type: "QUEUE_UPDATE" });
@@ -341,24 +344,14 @@ async function maybeCloseParentItem(historyId, currentVfId, currentVfStatus) {
       error:        s.error,
     }));
 
-    // Busca o pai pelo parentQueueId no IDB, ou pelo Blob se não achar
+    // Busca o pai pelo parentQueueId no IDB
     const parentQueueId = siblings.find((s) => s.parentQueueId)?.parentQueueId;
     let parent = parentQueueId ? queue.find((x) => x.id === parentQueueId) : null;
 
-    // Fallback: busca no Blob via API
-    if (!parent && parentQueueId) {
-      try {
-        const allBlob = await fetch(`${self.location.origin}/api/queue`).then(r => r.json());
-        parent = Array.isArray(allBlob) ? allBlob.find((x) => x.id === parentQueueId) : null;
-      } catch (_) {}
-    }
-
-    // Último fallback: busca por conta em comum no IDB ou Blob
+    // Fallback: busca por conta em comum no IDB (sem chamar /api/queue extra)
     if (!parent) {
-      const allItems = await fetch(`${self.location.origin}/api/queue`).then(r => r.json()).catch(() => queue);
-      const allItemsArr = Array.isArray(allItems) ? allItems : queue;
       const siblingAccountIds = new Set(siblingsUpdated.map(s => s.account_id));
-      parent = allItemsArr.find((x) =>
+      parent = queue.find((x) =>
         !x.type &&
         x.accounts?.some?.((a) => siblingAccountIds.has(a.id))
       );
@@ -404,6 +397,13 @@ async function maybeCloseParentItem(historyId, currentVfId, currentVfStatus) {
   } catch (err) {
     console.warn("[SW] maybeCloseParentItem erro:", err.message);
   }
+}
+
+// ─── Deleta item do Blob (fila remota) para evitar acúmulo ───────────────────
+async function deleteItemFromBlob(id) {
+  try {
+    await fetch(`${self.location.origin}/api/queue?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch (_) { /* não crítico */ }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
