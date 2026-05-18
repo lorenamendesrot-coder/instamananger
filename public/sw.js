@@ -106,7 +106,7 @@ async function runItem(item) {
           account_id:    pr.account_id,
           username:      pr.username || pr.account_id,
           accounts:      item.accounts,
-          scheduledAt:   Date.now() + 60000,
+          scheduledAt:   Date.now() + 120000,
           historyId,
           parentQueueId: item.id,   // ← id do item pai na fila
           mediaUrl,
@@ -115,7 +115,7 @@ async function runItem(item) {
           caption:       item.caption || "",
           createdAt:     new Date().toISOString(),
           attempts:      0,
-          maxAttempts:   8,
+          maxAttempts:   4,
         });
         console.log(`[SW] video_finish criado → @${pr.username} historyId:${historyId}`);
       }
@@ -292,9 +292,9 @@ async function runVideoFinishGroup(items) {
           await updateItem(item.id, { status: "error", error: errMsg });
           await maybeCloseParentItem(item.historyId, item.id, "error");
         } else {
-          // Backoff exponencial: 60s, 90s, 2min, 3min, 5min, 8min, 13min
-          const delays = [60, 90, 120, 180, 300, 480, 780];
-          const delay  = (delays[attempts - 1] || 120) * 1000;
+          // Backoff espaçado: 2min, 5min, 10min, 15min (4 tentativas máx)
+          const delays = [120, 300, 600, 900];
+          const delay  = (delays[attempts - 1] || 300) * 1000;
           console.log(`[SW] video_finish IN_PROGRESS @${item.username} — retry em ${delay/1000}s (${attempts}/${item.maxAttempts})`);
           await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + delay });
         }
