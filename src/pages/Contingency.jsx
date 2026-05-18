@@ -525,62 +525,12 @@ export default function Contingency() {
   const fileInputRef = useRef(null);
   const drive = useDriveAuth();
 
-  // ─── Drive CSV picker ───────────────────────────────────────────────────────
+  // ─── Drive CSV picker — estados ────────────────────────────────────────────
   const [drivePickerOpen,  setDrivePickerOpen]  = useState(false);
   const [driveFolders,     setDriveFolders]     = useState([]);
   const [driveCsvs,        setDriveCsvs]        = useState([]);
   const [driveStack,       setDriveStack]       = useState([{ id: "root", name: "Meu Drive" }]);
   const [driveLoading,     setDriveLoading]     = useState(false);
-
-  const loadDriveFolder = useCallback(async (folderId) => {
-    setDriveLoading(true);
-    try {
-      const token = await drive.getValidToken();
-      const res   = await fetch(`/api/drive-browse?folder=${encodeURIComponent(folderId)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      setDriveFolders(data.folders || []);
-      setDriveCsvs(data.csvs || []);
-    } catch (err) {
-      showToast("error", "Erro ao carregar Drive: " + err.message);
-    } finally {
-      setDriveLoading(false);
-    }
-  }, [drive]);
-
-  useEffect(() => {
-    if (drivePickerOpen && drive.isConnected) {
-      const current = driveStack[driveStack.length - 1];
-      loadDriveFolder(current.id);
-    }
-  }, [drivePickerOpen, driveStack, drive.isConnected]);
-
-  const handleImportFromDrive = useCallback(async (csvFile) => {
-    setDrivePickerOpen(false);
-    setImporting(true);
-    try {
-      const token = await drive.getValidToken();
-      const res   = await fetch(`https://www.googleapis.com/drive/v3/files/${csvFile.id}?alt=media`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`Erro ao baixar CSV: HTTP ${res.status}`);
-      const text = await res.text();
-      const rows = parseCSV(text);
-      if (!rows.length) { showToast("error", "Nenhuma conta encontrada no CSV."); return; }
-      const now = new Date().toISOString();
-      const created = await Promise.all(rows.map((row) => saveAccount({
-        id: uid(), username: row.username||"", senha: row.senha||"",
-        token2fa: row.token2fa||"", nome: row.nome||"",
-        status: "preparada", qualidade: "boa", notas: "", created_at: now, updated_at: now,
-      })));
-      showToast("success", `✅ ${created.length} conta(s) importada(s) do Drive!`);
-    } catch (err) {
-      showToast("error", "Erro ao importar do Drive: " + err.message);
-    } finally {
-      setImporting(false);
-    }
-  }, [drive, saveAccount, showToast]);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -620,6 +570,57 @@ export default function Contingency() {
     setToastMsg({ type, text });
     setTimeout(() => setToastMsg(null), 3200);
   }, []);
+
+  // ─── Drive CSV picker — funções ────────────────────────────────────────────
+  const loadDriveFolder = useCallback(async (folderId) => {
+    setDriveLoading(true);
+    try {
+      const token = await drive.getValidToken();
+      const res   = await fetch(`/api/drive-browse?folder=${encodeURIComponent(folderId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      setDriveFolders(data.folders || []);
+      setDriveCsvs(data.csvs || []);
+    } catch (err) {
+      showToast("error", "Erro ao carregar Drive: " + err.message);
+    } finally {
+      setDriveLoading(false);
+    }
+  }, [drive, showToast]);
+
+  useEffect(() => {
+    if (drivePickerOpen && drive.isConnected) {
+      const current = driveStack[driveStack.length - 1];
+      loadDriveFolder(current.id);
+    }
+  }, [drivePickerOpen, driveStack, drive.isConnected, loadDriveFolder]);
+
+  const handleImportFromDrive = useCallback(async (csvFile) => {
+    setDrivePickerOpen(false);
+    setImporting(true);
+    try {
+      const token = await drive.getValidToken();
+      const res   = await fetch(`https://www.googleapis.com/drive/v3/files/${csvFile.id}?alt=media`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`Erro ao baixar CSV: HTTP ${res.status}`);
+      const text = await res.text();
+      const rows = parseCSV(text);
+      if (!rows.length) { showToast("error", "Nenhuma conta encontrada no CSV."); return; }
+      const now = new Date().toISOString();
+      const created = await Promise.all(rows.map((row) => saveAccount({
+        id: uid(), username: row.username||"", senha: row.senha||"",
+        token2fa: row.token2fa||"", nome: row.nome||"",
+        status: "preparada", qualidade: "boa", notas: "", created_at: now, updated_at: now,
+      })));
+      showToast("success", `✅ ${created.length} conta(s) importada(s) do Drive!`);
+    } catch (err) {
+      showToast("error", "Erro ao importar do Drive: " + err.message);
+    } finally {
+      setImporting(false);
+    }
+  }, [drive, saveAccount, showToast]);
 
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
