@@ -33,7 +33,7 @@ const CAT_MAP = Object.fromEntries(CATEGORIES.map((c) => [c.id, c]));
 // ─── Classificação Automática ─────────────────────────────────────────────────
 
 function autoClassify(acc, healthResult) {
-  if (acc.token_status === "expired" || healthResult?.status === "token_expired") return "banida";
+  if (acc.token_status === "expired" || healthResult?.status === "token_expired") return "advertencia";
   const score     = healthResult?.score ?? null;
   const drop      = healthResult?.reach_drop_pct ?? null;
   const shadowban = healthResult?.issues?.some((i) => typeof i === "string" && i.toLowerCase().includes("shadowban")) ?? false;
