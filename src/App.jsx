@@ -158,7 +158,21 @@ function SchedulerProvider({ addEntry, children }) {
     reload();
     const h = () => reload();
     window.addEventListener("sw:queue-update", h);
-    return () => window.removeEventListener("sw:queue-update", h);
+
+    // Atualização cirúrgica: recebe item já com status "posted" direto do SW
+    // sem precisar de um GET ao Blob (evita race condition de consistency do Netlify)
+    const onSwMessage = (e) => {
+      if (e.data?.type === "ITEM_POSTED" && e.data?.item) {
+        const updated = e.data.item;
+        setQueue((prev) => prev.map((q) => q.id === updated.id ? { ...q, ...updated } : q));
+      }
+    };
+    navigator.serviceWorker?.addEventListener("message", onSwMessage);
+
+    return () => {
+      window.removeEventListener("sw:queue-update", h);
+      navigator.serviceWorker?.removeEventListener("message", onSwMessage);
+    };
   }, [reload]);
 
   useEffect(() => {
