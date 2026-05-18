@@ -436,16 +436,70 @@ function StatField({ label, children }) {
 
 // ─── Componente Principal ─────────────────────────────────────────────────────
 
+// ─── Opções de Ordenação ──────────────────────────────────────────────────────
+
+const SORT_OPTIONS = [
+  { id: "none",       label: "Padrão",       icon: "↕️" },
+  { id: "score_desc", label: "Qualidade ↓",  icon: "⭐" },
+  { id: "score_asc",  label: "Qualidade ↑",  icon: "⭐" },
+  { id: "followers_desc", label: "Seguidores ↓", icon: "👥" },
+  { id: "followers_asc",  label: "Seguidores ↑", icon: "👥" },
+  { id: "reach_desc", label: "Reach Drop ↓", icon: "📉" },
+  { id: "reach_asc",  label: "Reach Drop ↑", icon: "📉" },
+  { id: "cat",        label: "Categoria",    icon: "🏷️" },
+  { id: "name",       label: "Nome A–Z",     icon: "🔤" },
+];
+
+function sortEnriched(list, sortId) {
+  if (sortId === "none") return list;
+  const copy = [...list];
+  copy.sort((a, b) => {
+    const aScore = a.healthResult?.score ?? -1;
+    const bScore = b.healthResult?.score ?? -1;
+    const aFol   = a.acc.followers_count ?? -1;
+    const bFol   = b.acc.followers_count ?? -1;
+    const aDrop  = a.healthResult?.reach_drop_pct ?? 0;
+    const bDrop  = b.healthResult?.reach_drop_pct ?? 0;
+    switch (sortId) {
+      case "score_desc":    return bScore - aScore;
+      case "score_asc":     return aScore - bScore;
+      case "followers_desc": return bFol - aFol;
+      case "followers_asc":  return aFol - bFol;
+      case "reach_desc":    return bDrop - aDrop;
+      case "reach_asc":     return aDrop - bDrop;
+      case "cat": {
+        const CAT_ORDER = ["premium", "ativa", "warmup", "advertencia", "banida"];
+        return CAT_ORDER.indexOf(a.effectiveCat) - CAT_ORDER.indexOf(b.effectiveCat);
+      }
+      case "name": return (a.acc.name || a.acc.username || "").localeCompare(b.acc.name || b.acc.username || "", "pt-BR");
+      default: return 0;
+    }
+  });
+  return copy;
+}
+
 export default function Profiles() {
   const { accounts, loading, addAccounts } = useAccounts();
   const { getAccountResult, runCheck }     = useHealthCheck(accounts, {});
 
-  const [activeTab,  setActiveTab]  = useState("todas");
-  const [search,     setSearch]     = useState("");
-  const [readyOnly,  setReadyOnly]  = useState(false);
-  const [overrides,  setOverrides]  = useState({});
-  const [notes,      setNotes]      = useState({});
-  const [dbLoaded,   setDbLoaded]   = useState(false);
+  const [activeTab,     setActiveTab]     = useState("todas");
+  const [search,        setSearch]        = useState("");
+  const [readyOnly,     setReadyOnly]     = useState(false);
+  const [overrides,     setOverrides]     = useState({});
+  const [notes,         setNotes]         = useState({});
+  const [dbLoaded,      setDbLoaded]      = useState(false);
+  const [sortBy,        setSortBy]        = useState("none");
+  const [sortOpen,      setSortOpen]      = useState(false);
+  const [refreshing,    setRefreshing]    = useState(false);
+  const [refreshMsg,    setRefreshMsg]    = useState(null);
+
+  // Fechar dropdown ao clicar fora
+  useEffect(() => {
+    if (!sortOpen) return;
+    const handler = () => setSortOpen(false);
+    document.addEventListener("click", handler, true);
+    return () => document.removeEventListener("click", handler, true);
+  }, [sortOpen]);
 
   useEffect(() => {
     Promise.all([
@@ -478,6 +532,24 @@ export default function Profiles() {
     catch (err) { console.error("[Profiles] Erro ao salvar campo:", err); }
   }, [addAccounts]);
 
+  // Atualizar dados: re-sincroniza todas as contas + refaz health check
+  const handleRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setRefreshMsg(null);
+    try {
+      await addAccounts(accounts);
+      await runCheck(true);
+      setRefreshMsg({ ok: true, text: "Dados atualizados!" });
+    } catch (err) {
+      console.error("[Profiles] Erro ao atualizar:", err);
+      setRefreshMsg({ ok: false, text: "Erro ao atualizar." });
+    } finally {
+      setRefreshing(false);
+      setTimeout(() => setRefreshMsg(null), 3000);
+    }
+  }, [refreshing, accounts, addAccounts, runCheck]);
+
   const enriched = useMemo(() => accounts.map((acc) => {
     const healthResult = getAccountResult(acc.id);
     const effectiveCat = overrides[acc.id] || autoClassify(acc, healthResult);
@@ -492,7 +564,7 @@ export default function Profiles() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return enriched.filter(({ acc, effectiveCat }) => {
+    const base = enriched.filter(({ acc, effectiveCat }) => {
       if (activeTab !== "todas" && effectiveCat !== activeTab) return false;
       if (readyOnly && effectiveCat !== "ativa" && effectiveCat !== "premium") return false;
       if (q) {
@@ -501,7 +573,8 @@ export default function Profiles() {
       }
       return true;
     });
-  }, [enriched, activeTab, search, readyOnly]);
+    return sortEnriched(base, sortBy);
+  }, [enriched, activeTab, search, readyOnly, sortBy]);
 
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 80 }}>
@@ -529,9 +602,30 @@ export default function Profiles() {
           </h1>
           <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 3 }}>Gerencie, classifique e monitore todos os perfis Instagram</p>
         </div>
-        <button onClick={() => runCheck(true)} className="btn btn-ghost btn-sm" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-          🔄 Atualizar Health Check
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Mensagem de feedback */}
+          {refreshMsg && (
+            <span style={{ fontSize: 12, fontWeight: 600, color: refreshMsg.ok ? "var(--success)" : "var(--danger)", padding: "6px 10px", background: refreshMsg.ok ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)", borderRadius: 8, border: `1px solid ${refreshMsg.ok ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`, whiteSpace: "nowrap" }}>
+              {refreshMsg.ok ? "✓" : "✕"} {refreshMsg.text}
+            </span>
+          )}
+          {/* Botão Atualizar Dados */}
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="btn btn-ghost btn-sm"
+            style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, opacity: refreshing ? 0.7 : 1, minWidth: 140, justifyContent: "center" }}
+          >
+            {refreshing
+              ? <><span className="spinner" style={{ width: 12, height: 12, borderTopColor: "var(--accent)", borderWidth: 2 }} /> Atualizando...</>
+              : <><span style={{ fontSize: 14 }}>🔄</span> Atualizar Dados</>
+            }
+          </button>
+          {/* Health Check */}
+          <button onClick={() => runCheck(true)} className="btn btn-ghost btn-sm" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+            🩺 Health Check
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -556,6 +650,28 @@ export default function Profiles() {
           <input type="text" placeholder="Buscar por username, nome ou email..." value={search} onChange={(e) => setSearch(e.target.value)} style={{ paddingLeft: 34, paddingRight: search ? 32 : 13 }} />
           {search && <button onClick={() => setSearch("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", color: "var(--muted)", fontSize: 14 }}>✕</button>}
         </div>
+
+        {/* Ordenar por — dropdown */}
+        <div style={{ position: "relative" }}>
+          <button
+            onClick={() => setSortOpen((v) => !v)}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", color: sortBy !== "none" ? "var(--accent2)" : "var(--muted)", background: sortBy !== "none" ? "rgba(139,92,246,0.1)" : "var(--bg3)", border: sortBy !== "none" ? "1px solid rgba(139,92,246,0.35)" : "1px solid var(--border)", transition: "all 0.15s", whiteSpace: "nowrap" }}
+          >
+            {SORT_OPTIONS.find((s) => s.id === sortBy)?.icon || "↕️"} Ordenar{sortBy !== "none" ? `: ${SORT_OPTIONS.find((s) => s.id === sortBy)?.label}` : ""} ▾
+          </button>
+          {sortOpen && (
+            <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 100, background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 12, padding: "6px", minWidth: 180, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+              {SORT_OPTIONS.map((opt) => (
+                <button key={opt.id} onClick={() => { setSortBy(opt.id); setSortOpen(false); }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: sortBy === opt.id ? 700 : 500, color: sortBy === opt.id ? "var(--accent2)" : "var(--text2)", background: sortBy === opt.id ? "rgba(139,92,246,0.12)" : "transparent", border: "none", cursor: "pointer", textAlign: "left", transition: "background 0.1s" }}>
+                  <span>{opt.icon}</span> {opt.label}
+                  {sortBy === opt.id && <span style={{ marginLeft: "auto", color: "var(--accent2)" }}>✓</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         <button onClick={() => setReadyOnly((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", color: readyOnly ? "var(--success)" : "var(--muted)", background: readyOnly ? "rgba(34,197,94,0.1)" : "var(--bg3)", border: readyOnly ? "1px solid rgba(34,197,94,0.3)" : "1px solid var(--border)", transition: "all 0.15s" }}>
           {readyOnly ? "✅" : "📋"} Prontas para subir
         </button>
