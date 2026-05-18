@@ -166,6 +166,68 @@ function parseCSV(text) {
   }
   return rows;
 }
+
+/** Parseia XLSX usando a lib SheetJS carregada dinamicamente */
+async function parseXLSX(arrayBuffer) {
+  // Carrega SheetJS via CDN se ainda não estiver disponível
+  if (!window.XLSX) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+      s.onload = resolve;
+      s.onerror = () => reject(new Error("Falha ao carregar parser XLSX"));
+      document.head.appendChild(s);
+    });
+  }
+  const XLSX = window.XLSX;
+  const wb   = XLSX.read(arrayBuffer, { type: "array" });
+  const ws   = wb.Sheets[wb.SheetNames[0]];
+  const raw  = XLSX.utils.sheet_to_json(ws, { defval: "" });
+  if (!raw.length) return [];
+
+  // Normaliza cabeçalhos
+  const COL_ALIASES = {
+    username: ["username","user","login","usuario","conta","account","perfil"],
+    senha:    ["senha","password","pass","pw","secret"],
+    token2fa: ["token2fa","token","2fa","otp","totp","chave2fa"],
+    nome:     ["nome","name","display","apelido"],
+  };
+  const firstRow   = raw[0];
+  const headerKeys = Object.keys(firstRow);
+  const colMap     = {};
+  for (const [field, aliases] of Object.entries(COL_ALIASES)) {
+    const found = headerKeys.find((k) => aliases.includes(k.toLowerCase().replace(/[^a-z0-9_]/g, "")));
+    if (found) colMap[field] = found;
+  }
+
+  return raw
+    .map((row) => {
+      const r = {};
+      for (const [field, key] of Object.entries(colMap)) r[field] = String(row[key] || "").trim();
+      return r;
+    })
+    .filter((r) => r.username);
+}
+
+/** Detecta se é xlsx pelo nome do arquivo e chama o parser certo */
+async function parseSpreadsheet(file) {
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+    const buf = await file.arrayBuffer();
+    return parseXLSX(buf);
+  }
+  return parseCSV(await file.text());
+}
+
+/** Parseia xlsx vindo do Drive (já em ArrayBuffer) */
+async function parseDriveFile(arrayBuffer, filename) {
+  const name = (filename || "").toLowerCase();
+  if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+    return parseXLSX(arrayBuffer);
+  }
+  const text = new TextDecoder("utf-8").decode(arrayBuffer);
+  return parseCSV(text);
+}
 function exportCSV(accounts) {
   const headers = ["username","senha","token2fa","nome","status","qualidade","notas","atualizado_em"];
   const escape  = (v) => `"${String(v||"").replace(/"/g,'""')}"`;
@@ -572,9 +634,9 @@ export default function Contingency() {
     try {
       // Baixa o conteúdo do arquivo via Drive API usando o driveProxy já existente
       const res = await fetch(`/api/drive-proxy?id=${csvFile.id}`);
-      if (!res.ok) throw new Error(`Erro ao baixar CSV: HTTP ${res.status}`);
-      const text = await res.text();
-      const rows = parseCSV(text);
+      if (!res.ok) throw new Error(`Erro ao baixar arquivo: HTTP ${res.status}`);
+      const arrayBuffer = await res.arrayBuffer();
+      const rows = await parseDriveFile(arrayBuffer, csvFile.name);
       if (!rows.length) { showToast("error", "Nenhuma conta encontrada no CSV."); return; }
       const now = new Date().toISOString();
       const created = await Promise.all(rows.map((row) => saveAccount({
@@ -594,7 +656,7 @@ export default function Contingency() {
     const file = e.target.files?.[0]; if (!file) return;
     e.target.value = ""; setImporting(true);
     try {
-      const rows = parseCSV(await file.text());
+      const rows = await parseSpreadsheet(file);
       if (!rows.length) { showToast("error", "Nenhuma conta encontrada."); return; }
       const now = new Date().toISOString();
       const created = await Promise.all(rows.map((row) => saveAccount({
@@ -688,7 +750,7 @@ export default function Contingency() {
           <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
             <button className="btn btn-ghost btn-sm" onClick={handleAddEmpty}>{isMobile ? "➕" : "➕ Adicionar"}</button>
             <button className="btn btn-primary btn-sm" onClick={() => fileInputRef.current?.click()} disabled={importing}>
-              {importing ? <><span className="spinner" style={{ width:11,height:11,borderTopColor:"#fff" }} /> Importando...</> : isMobile ? "📥 CSV" : "📥 Importar CSV"}
+              {importing ? <><span className="spinner" style={{ width:11,height:11,borderTopColor:"#fff" }} /> Importando...</> : isMobile ? "📥 Arquivo" : "📥 Importar CSV/XLSX"}
             </button>
             <button className="btn btn-ghost btn-sm" onClick={() => setDrivePickerOpen(true)} disabled={importing}
               style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
@@ -703,7 +765,7 @@ export default function Contingency() {
               {!isMobile && "Drive"}
             </button>
             <button className="btn btn-ghost btn-sm" onClick={handleExport} disabled={!filtered.length}>{isMobile ? "📤" : "📤 Exportar CSV"}</button>
-            <input ref={fileInputRef} type="file" accept=".csv,.txt,.tsv" style={{ display:"none" }} onChange={handleFileChange} />
+            <input ref={fileInputRef} type="file" accept=".csv,.txt,.tsv,.xlsx,.xls" style={{ display:"none" }} onChange={handleFileChange} />
           </div>
         </div>
       </div>
@@ -751,9 +813,9 @@ export default function Contingency() {
           <div style={{ fontSize:36, marginBottom:10 }}>🛡️</div>
           <div style={{ fontSize:15, fontWeight:700, color:"var(--text)", marginBottom:8 }}>Nenhuma conta de contingência ainda</div>
           <div style={{ fontSize:12, color:"var(--muted)", marginBottom:18, lineHeight:1.7 }}>
-            Importe um CSV com: <code style={{ color:"var(--accent3)", background:"var(--bg3)", padding:"2px 6px", borderRadius:4 }}>username, senha, token2fa, nome</code>
+            Importe um CSV ou XLSX com: <code style={{ color:"var(--accent3)", background:"var(--bg3)", padding:"2px 6px", borderRadius:4 }}>username, senha, token2fa, nome</code>
           </div>
-          <button className="btn btn-primary" onClick={() => fileInputRef.current?.click()} disabled={importing}>📥 Importar CSV agora</button>
+          <button className="btn btn-primary" onClick={() => fileInputRef.current?.click()} disabled={importing}>📥 Importar CSV/XLSX agora</button>
         </div>
       )}
 

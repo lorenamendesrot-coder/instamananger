@@ -28,6 +28,9 @@ const VIDEO_MIMES = [
 const CSV_MIMES = [
   "text/csv", "text/plain", "application/csv",
   "application/vnd.ms-excel",
+  // xlsx
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel.sheet.macroEnabled.12",
 ];
 
 const ALL_MIMES = [...VIDEO_MIMES, ...CSV_MIMES];
@@ -61,7 +64,7 @@ async function listFolder(token, folderId) {
   for (const f of data.files || []) {
     if (f.mimeType === "application/vnd.google-apps.folder") {
       folders.push({ id: f.id, name: f.name, type: "folder" });
-    } else if (CSV_MIMES.includes(f.mimeType) || f.name.toLowerCase().endsWith(".csv")) {
+    } else if (CSV_MIMES.includes(f.mimeType) || f.name.toLowerCase().endsWith(".csv") || f.name.toLowerCase().endsWith(".xlsx") || f.name.toLowerCase().endsWith(".xls")) {
       csvs.push({
         id:         f.id,
         name:       f.name,

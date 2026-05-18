@@ -341,23 +341,27 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
 
               {folders.length>0 && (fileMode==="csv" ? csvs.length>0 : videos.length>0) && <div style={{height:1,background:"var(--border)",margin:"8px 0"}} />}
 
-              {/* Modo CSV */}
+              {/* Modo CSV/XLSX */}
               {fileMode==="csv" && csvs.length>0 && (
                 <>
-                  <div style={{fontSize:12,color:"var(--muted)",marginBottom:6}}>{csvs.length} arquivo{csvs.length!==1?"s":""} CSV</div>
-                  {csvs.map(f => (
+                  <div style={{fontSize:12,color:"var(--muted)",marginBottom:6}}>{csvs.length} arquivo{csvs.length!==1?"s":""}</div>
+                  {csvs.map(f => {
+                    const isXlsx = f.name.toLowerCase().endsWith(".xlsx") || f.name.toLowerCase().endsWith(".xls");
+                    return (
                     <div key={f.id} onClick={() => onPick?.([f])}
                       style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,cursor:"pointer",fontSize:13,border:"1px solid transparent",transition:"all 0.12s"}}
                       onMouseEnter={e=>{e.currentTarget.style.background="rgba(124,92,252,0.08)";e.currentTarget.style.borderColor="rgba(124,92,252,0.3)";}}
                       onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";}}>
-                      <span style={{fontSize:18}}>📄</span>
+                      <span style={{fontSize:18}}>{isXlsx ? "📊" : "📄"}</span>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
-                        {f.size>0 && <div style={{fontSize:10,color:"var(--muted)"}}>{(f.size/1024).toFixed(1)} KB</div>}
+                        <div style={{fontSize:10,color:"var(--muted)",marginTop:1}}>
+                          {isXlsx ? "Excel" : "CSV"}{f.size>0 ? ` · ${(f.size/1024).toFixed(1)} KB` : ""}
+                        </div>
                       </div>
                       <span style={{fontSize:11,color:"var(--accent-light)",flexShrink:0}}>Importar →</span>
                     </div>
-                  ))}
+                  );})}
                 </>
               )}
 
