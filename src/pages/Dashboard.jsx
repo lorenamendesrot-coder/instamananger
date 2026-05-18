@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { useAccounts } from "../App.jsx";
 import { useScheduler } from "../App.jsx";
 import { useHistory }   from "../App.jsx";
@@ -155,9 +155,24 @@ function RecentPostRow({ item }) {
 
 // ── Página principal ───────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const { accounts } = useAccounts();
-  const { queue }    = useScheduler();
-  const { history }  = useHistory();
+  const { accounts, reloadAccounts }       = useAccounts();
+  const { queue, reload: reloadQueue }     = useScheduler();
+  const { history, reloadHistory }         = useHistory();
+
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await Promise.allSettled([
+        reloadAccounts?.(),
+        reloadQueue?.(),
+        reloadHistory?.(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshing, reloadAccounts, reloadQueue, reloadHistory]);
 
   // ── Métricas de contas ────────────────────────────────────────────────────
   const totalFollowers = accounts.reduce((s, a) => s + (a.followers_count || 0), 0);
@@ -218,6 +233,7 @@ export default function Dashboard() {
     <div className="page">
       <style>{`
         @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+        @keyframes spin    { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .dash-card { animation: fadeUp 0.3s ease both; }
         .dash-card:nth-child(1) { animation-delay: 0.00s; }
         .dash-card:nth-child(2) { animation-delay: 0.05s; }
@@ -231,9 +247,24 @@ export default function Dashboard() {
           <div className="page-title">Dashboard</div>
           <div className="page-subtitle">Visão geral das suas contas e publicações</div>
         </div>
-        <NavLink to="/fila" className="btn btn-primary btn-sm" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
-          + Nova publicação
-        </NavLink>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title="Atualizar dashboard"
+            style={{ display: "flex", alignItems: "center", gap: 6 }}
+          >
+            <span style={{
+              display: "inline-block",
+              animation: refreshing ? "spin 0.7s linear infinite" : "none",
+            }}>↻</span>
+            {refreshing ? "Atualizando…" : "Atualizar"}
+          </button>
+          <NavLink to="/fila" className="btn btn-primary btn-sm" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
+            + Nova publicação
+          </NavLink>
+        </div>
       </div>
 
       {/* ── Stat cards ────────────────────────────────────────────────────── */}
