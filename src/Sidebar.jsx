@@ -5,6 +5,7 @@ import { useScheduler } from "./App.jsx";
 const NAV = [
   { to: "/",          label: "Dashboard", icon: "📊", desc: "Visão geral"         },
   { to: "/contas",       label: "Contas",       icon: "👤", desc: "Gerencie suas contas"  },
+  { to: "/perfis",       label: "Perfis",       icon: "🪪", desc: "Cards e categorias"     },
   { to: "/aquecimento",    label: "Aquecimento",  icon: "🔥", desc: "Aquecer contas"        },
   { to: "/fila",           label: "Fila",         icon: "🗂️", desc: "Agendamentos ativos"   },
   { to: "/historico",      label: "Histórico",    icon: "🕐", desc: "Posts publicados"      },
