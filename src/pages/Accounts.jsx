@@ -275,6 +275,8 @@ export default function Accounts() {
   const [selected,        setSelected]        = useState(new Set());
   const [refreshingAll,   setRefreshingAll]   = useState(false);
   const [addMenuOpen,     setAddMenuOpen]     = useState(false);
+  const [checkingTokens,  setCheckingTokens]  = useState(false);
+  const [tokenCheckResult, setTokenCheckResult] = useState(null);
   const addMenuRef = useRef(null);
 
   const APP_ID   = import.meta.env.VITE_META_FB_APP_ID || import.meta.env.VITE_META_APP_ID;
@@ -350,6 +352,25 @@ export default function Accounts() {
     setRefreshingAll(true);
     await Promise.all(accounts.map((acc) => fetchProfile(acc, true)));
     setRefreshingAll(false);
+  };
+
+  const handleCheckTokens = async () => {
+    if (checkingTokens) return;
+    setCheckingTokens(true);
+    setTokenCheckResult(null);
+    try {
+      const res  = await fetch("/api/check-tokens");
+      const data = await res.json();
+      const recovered = (data.results || []).filter((r) => r.refresh?.recovered).length;
+      const stillExp  = (data.results || []).filter((r) => !r.is_valid && !r.refresh?.renewed).length;
+      setTokenCheckResult({ recovered, stillExp });
+      // Recarrega contas para refletir novos token_status
+      await reloadAccounts();
+    } catch (e) {
+      setTokenCheckResult({ error: e.message });
+    } finally {
+      setCheckingTokens(false);
+    }
   };
 
   const openDetail = (acc) => {
@@ -590,6 +611,47 @@ export default function Accounts() {
         </div>
       ) : (
         <>
+          {/* ── Banner: tokens expirados ──────────────────────────────────────── */}
+          {expiredTokens > 0 && (
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10,
+              background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)",
+              borderLeft: "4px solid var(--danger)", borderRadius: 10, padding: "12px 16px", marginBottom: 16,
+            }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--danger)" }}>
+                  ⚠️ {expiredTokens} token{expiredTokens > 1 ? "s expirados" : " expirado"}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
+                  Clique em "Tentar renovar" — o sistema tenta recuperar automaticamente antes de pedir reconexão manual.
+                </div>
+                {tokenCheckResult && !tokenCheckResult.error && (
+                  <div style={{ fontSize: 11, marginTop: 6, color: tokenCheckResult.recovered > 0 ? "var(--success)" : "var(--muted)" }}>
+                    {tokenCheckResult.recovered > 0 ? `✅ ${tokenCheckResult.recovered} conta${tokenCheckResult.recovered > 1 ? "s recuperadas" : " recuperada"}!` : ""}
+                    {tokenCheckResult.stillExp > 0 ? ` · ${tokenCheckResult.stillExp} ainda ${tokenCheckResult.stillExp > 1 ? "precisam" : "precisa"} de reconexão manual.` : tokenCheckResult.recovered > 0 ? " Todas recuperadas!" : " Reconexão manual necessária."}
+                  </div>
+                )}
+                {tokenCheckResult?.error && (
+                  <div style={{ fontSize: 11, marginTop: 6, color: "var(--danger)" }}>Erro: {tokenCheckResult.error}</div>
+                )}
+              </div>
+              <button
+                onClick={handleCheckTokens}
+                disabled={checkingTokens}
+                style={{
+                  background: checkingTokens ? "var(--bg3)" : "var(--danger)", color: "#fff",
+                  border: "none", borderRadius: 8, padding: "8px 16px",
+                  fontSize: 12, fontWeight: 700, cursor: checkingTokens ? "not-allowed" : "pointer",
+                  display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", flexShrink: 0,
+                }}
+              >
+                {checkingTokens
+                  ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Verificando…</>
+                  : "🔄 Tentar renovar"}
+              </button>
+            </div>
+          )}
+
           {/* ── Cards de resumo ──────────────────────────────────────────────── */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12, marginBottom: 24 }}>
             {[

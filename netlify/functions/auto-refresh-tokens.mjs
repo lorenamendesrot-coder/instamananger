@@ -61,10 +61,30 @@ export default async function handler() {
         : null; // null = nunca expira (token de página permanente)
 
       if (!isValid) {
-        // Token expirado — marcar no Blob para avisar no dashboard
-        await store.setJSON(key, { ...acc, token_status: "expired", updated_at: new Date().toISOString() });
-        results.push({ username: acc.username, status: "expired" });
-        expired++;
+        // Token inválido segundo debug_token — tenta refresh antes de desistir.
+        // Isso cobre o caso de revogação por rate limit: o debug retorna is_valid=false
+        // mas o token ainda pode ser trocado por um novo via fb_exchange_token.
+        console.log(`[auto-refresh-tokens] @${acc.username} token inválido — tentando refresh antes de marcar expired`);
+        const refreshed = await refreshToken(acc.access_token);
+        if (refreshed.access_token) {
+          await store.setJSON(key, {
+            ...acc,
+            access_token:       refreshed.access_token,
+            token_status:       "valid",
+            token_refreshed_at: new Date().toISOString(),
+            token_expires_in:   refreshed.expires_in,
+            updated_at:         new Date().toISOString(),
+          });
+          results.push({ username: acc.username, status: "recovered", expires_in: refreshed.expires_in });
+          renewed++;
+          console.log(`[auto-refresh-tokens] ✅ @${acc.username} recuperado via refresh`);
+        } else {
+          // Refresh também falhou — agora sim marca como expirado definitivamente
+          await store.setJSON(key, { ...acc, token_status: "expired", updated_at: new Date().toISOString() });
+          results.push({ username: acc.username, status: "expired", refresh_error: refreshed.error });
+          expired++;
+          console.warn(`[auto-refresh-tokens] ❌ @${acc.username} expirado definitivamente (refresh falhou: ${JSON.stringify(refreshed.error)})`);
+        }
         continue;
       }
 

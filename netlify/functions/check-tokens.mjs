@@ -120,13 +120,29 @@ export const handler = async (event) => {
         }
       }
 
-      // Marca como expirado no Blobs se inválido
+      // Marca como expirado no Blobs se inválido — mas tenta refresh antes
       if (!isValid) {
-        await store.setJSON(`account-${acc.id}`, {
-          ...acc,
-          token_status: "expired",
-          updated_at: new Date().toISOString(),
-        });
+        const refreshed = await tryRefresh(token);
+        if (refreshed.access_token && refreshed.access_token !== token) {
+          // Conseguiu recuperar — salva novo token e marca válido
+          await store.setJSON(`account-${acc.id}`, {
+            ...acc,
+            access_token:       refreshed.access_token,
+            token_status:       "valid",
+            token_refreshed_at: new Date().toISOString(),
+            token_expires_in:   refreshed.expires_in,
+            updated_at:         new Date().toISOString(),
+          });
+          refreshResult = { renewed: true, recovered: true, new_expires_in: refreshed.expires_in };
+        } else {
+          // Refresh também falhou — agora sim marca como expirado
+          await store.setJSON(`account-${acc.id}`, {
+            ...acc,
+            token_status: "expired",
+            updated_at:   new Date().toISOString(),
+          });
+          refreshResult = { renewed: false, reason: refreshed.error || "refresh falhou" };
+        }
       } else if (!refreshResult) {
         // Válido e com bastante tempo — marca como válido
         await store.setJSON(`account-${acc.id}`, {
