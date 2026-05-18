@@ -1,6 +1,6 @@
 // Service Worker — Insta Manager Scheduler v6
 // Fix: vídeos pendentes salvos no IDB, atualizando o mesmo item do histórico
-const TICK_INTERVAL = 20000;
+const TICK_INTERVAL = 60000; // 1 tick/min — era 20s (3x/min), reduzido para poupar GET /api/queue
 
 self.addEventListener("install",  (e) => { e.waitUntil(self.skipWaiting()); });
 self.addEventListener("activate", (e) => { e.waitUntil(self.clients.claim()); startTicker(); });
@@ -106,16 +106,16 @@ async function runItem(item) {
           account_id:    pr.account_id,
           username:      pr.username || pr.account_id,
           accounts:      item.accounts,
-          scheduledAt:   Date.now() + 120000,
+          scheduledAt:   Date.now() + 90000,  // 1º check em 90s
           historyId,
-          parentQueueId: item.id,   // ← id do item pai na fila
+          parentQueueId: item.id,
           mediaUrl,
           postType:      item.postType,
           mediaType:     item.mediaType,
           caption:       item.caption || "",
           createdAt:     new Date().toISOString(),
           attempts:      0,
-          maxAttempts:   4,
+          maxAttempts:   5,  // 5 tentativas × delays crescentes = ~25min de margem
         });
         console.log(`[SW] video_finish criado → @${pr.username} historyId:${historyId}`);
       }
@@ -260,7 +260,7 @@ async function runVideoFinishGroup(items) {
         if (isRateLimit && attempts < item.maxAttempts) {
           // Backoff exponencial: 15min, 30min, 30min...
           // Era 5min/10min/20min — muito agressivo, esgotava a quota novamente
-          const retryDelay = Math.min(15 * 60 * 1000 * Math.pow(2, attempts - 1), 30 * 60 * 1000);
+          const retryDelay = 30 * 60 * 1000; // 30min fixo para rate limit — sem exponencial para não perder controle
           console.warn(`[SW] video_finish rate limit @${item.username} retry em ${Math.round(retryDelay/60000)}min (${attempts}/${item.maxAttempts})`);
           await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + retryDelay, lastError: errMsg });
           continue;
@@ -292,8 +292,9 @@ async function runVideoFinishGroup(items) {
           await updateItem(item.id, { status: "error", error: errMsg });
           await maybeCloseParentItem(item.historyId, item.id, "error");
         } else {
-          // Backoff espaçado: 2min, 5min, 10min, 15min (4 tentativas máx)
-          const delays = [120, 300, 600, 900];
+          // Backoff: 2min, 5min, 10min, 15min, 30min
+          // Conservador para não esgotar cota com 10+ contas simultâneas
+          const delays = [120, 300, 600, 900, 1800];
           const delay  = (delays[attempts - 1] || 300) * 1000;
           console.log(`[SW] video_finish IN_PROGRESS @${item.username} — retry em ${delay/1000}s (${attempts}/${item.maxAttempts})`);
           await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + delay });
@@ -305,7 +306,7 @@ async function runVideoFinishGroup(items) {
     // Erro de rede — reagenda todos com backoff
     for (const item of items) {
       const attempts = (item.attempts || 0) + 1;
-      const delay    = attempts >= item.maxAttempts ? null : Math.min(60000 * attempts, 300000);
+      const delay    = attempts >= item.maxAttempts ? null : Math.min(120000 * attempts, 600000); // max 10min por erro de rede
       if (delay === null) {
         await updateItem(item.id, { status: "error", error: err.message });
       } else {
