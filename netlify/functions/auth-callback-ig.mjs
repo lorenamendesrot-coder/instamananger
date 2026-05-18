@@ -83,9 +83,16 @@ export const handler = async (event) => {
     }
 
     // ── 2. Trocar por token longo (60 dias) ───────────────────────────────
-    const longRes = await apiFetch(
-      `${IG_GRAPH}/access_token?grant_type=ig_exchange_token&client_secret=${APP_SECRET}&access_token=${shortToken}`
-    );
+    // NOTA: A API do Instagram exige POST (não GET) para ig_exchange_token
+    const longRes = await apiFetch(`${IG_GRAPH}/access_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type:    "ig_exchange_token",
+        client_secret: APP_SECRET,
+        access_token:  shortToken,
+      }),
+    });
 
     console.log("[auth-callback-ig] long token response:", JSON.stringify(longRes));
 
