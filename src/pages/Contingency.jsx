@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useDriveAuth } from "../useDriveAuth.js";
 
 // ─── TOTP nativo via Web Crypto API (RFC 6238) ────────────────────────────────
 
@@ -522,6 +523,64 @@ export default function Contingency() {
   const [importing,    setImporting]   = useState(false);
   const [isMobile,     setIsMobile]    = useState(false);
   const fileInputRef = useRef(null);
+  const drive = useDriveAuth();
+
+  // ─── Drive CSV picker ───────────────────────────────────────────────────────
+  const [drivePickerOpen,  setDrivePickerOpen]  = useState(false);
+  const [driveFolders,     setDriveFolders]     = useState([]);
+  const [driveCsvs,        setDriveCsvs]        = useState([]);
+  const [driveStack,       setDriveStack]       = useState([{ id: "root", name: "Meu Drive" }]);
+  const [driveLoading,     setDriveLoading]     = useState(false);
+
+  const loadDriveFolder = useCallback(async (folderId) => {
+    setDriveLoading(true);
+    try {
+      const token = await drive.getValidToken();
+      const res   = await fetch(`/api/drive-browse?folder=${encodeURIComponent(folderId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      setDriveFolders(data.folders || []);
+      setDriveCsvs(data.csvs || []);
+    } catch (err) {
+      showToast("error", "Erro ao carregar Drive: " + err.message);
+    } finally {
+      setDriveLoading(false);
+    }
+  }, [drive]);
+
+  useEffect(() => {
+    if (drivePickerOpen && drive.isConnected) {
+      const current = driveStack[driveStack.length - 1];
+      loadDriveFolder(current.id);
+    }
+  }, [drivePickerOpen, driveStack, drive.isConnected]);
+
+  const handleImportFromDrive = useCallback(async (csvFile) => {
+    setDrivePickerOpen(false);
+    setImporting(true);
+    try {
+      const token = await drive.getValidToken();
+      const res   = await fetch(`https://www.googleapis.com/drive/v3/files/${csvFile.id}?alt=media`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`Erro ao baixar CSV: HTTP ${res.status}`);
+      const text = await res.text();
+      const rows = parseCSV(text);
+      if (!rows.length) { showToast("error", "Nenhuma conta encontrada no CSV."); return; }
+      const now = new Date().toISOString();
+      const created = await Promise.all(rows.map((row) => saveAccount({
+        id: uid(), username: row.username||"", senha: row.senha||"",
+        token2fa: row.token2fa||"", nome: row.nome||"",
+        status: "preparada", qualidade: "boa", notas: "", created_at: now, updated_at: now,
+      })));
+      showToast("success", `✅ ${created.length} conta(s) importada(s) do Drive!`);
+    } catch (err) {
+      showToast("error", "Erro ao importar do Drive: " + err.message);
+    } finally {
+      setImporting(false);
+    }
+  }, [drive, saveAccount, showToast]);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -662,8 +721,11 @@ export default function Contingency() {
             <button className="btn btn-primary btn-sm" onClick={() => fileInputRef.current?.click()} disabled={importing}>
               {importing ? <><span className="spinner" style={{ width:11,height:11,borderTopColor:"#fff" }} /> Importando...</> : isMobile ? "📥 CSV" : "📥 Importar CSV"}
             </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setDrivePickerOpen(true)} disabled={importing}>
+              {isMobile ? "📂" : "📂 Drive"}
+            </button>
             <button className="btn btn-ghost btn-sm" onClick={handleExport} disabled={!filtered.length}>{isMobile ? "📤" : "📤 Exportar CSV"}</button>
-            <input ref={fileInputRef} type="file" accept=".csv,text/csv" style={{ display:"none" }} onChange={handleFileChange} />
+            <input ref={fileInputRef} type="file" accept=".csv,text/csv,text/plain,application/csv" style={{ display:"none" }} onChange={handleFileChange} />
           </div>
         </div>
       </div>
@@ -755,6 +817,120 @@ export default function Contingency() {
       {accounts.length > 0 && (
         <div style={{ marginTop:14, fontSize:10, color:"var(--muted)", textAlign:"right" }}>
           💾 Dados salvos localmente (IndexedDB). Exporte CSV para backup.
+        </div>
+      )}
+
+      {/* ─── Modal Drive CSV Picker ─────────────────────────────────────────── */}
+      {drivePickerOpen && (
+        <div onClick={(e) => e.target === e.currentTarget && setDrivePickerOpen(false)} style={{
+          position:"fixed", inset:0, zIndex:3000, background:"rgba(0,0,0,0.7)",
+          display:"flex", alignItems:"center", justifyContent:"center", padding:16,
+        }}>
+          <div style={{
+            background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:14,
+            width:"100%", maxWidth:480, maxHeight:"80vh", display:"flex", flexDirection:"column",
+            boxShadow:"0 24px 64px rgba(0,0,0,0.6)", overflow:"hidden",
+          }}>
+            {/* Header */}
+            <div style={{ padding:"12px 16px", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontWeight:700, fontSize:14 }}>📂 Importar CSV do Google Drive</span>
+              <div style={{ flex:1 }} />
+              <button onClick={() => setDrivePickerOpen(false)} className="btn btn-ghost btn-sm" style={{ padding:"4px 10px" }}>✕</button>
+            </div>
+
+            {/* Body */}
+            <div style={{ flex:1, overflowY:"auto", padding:"12px 16px" }}>
+              {/* Não conectado */}
+              {!drive.isConnected && !drive.isExpired && (
+                <div style={{ textAlign:"center", padding:"32px 16px" }}>
+                  <div style={{ fontSize:40, marginBottom:12 }}>📂</div>
+                  <div style={{ fontWeight:600, marginBottom:8 }}>Conecte o Google Drive</div>
+                  <div style={{ fontSize:12, color:"var(--muted)", marginBottom:16 }}>Para importar CSVs diretamente do seu Drive.</div>
+                  <button onClick={drive.connect} className="btn btn-primary">
+                    {drive.isConnecting ? "Aguardando login..." : "🔑 Entrar com Google"}
+                  </button>
+                </div>
+              )}
+
+              {/* Sessão expirada */}
+              {drive.isExpired && (
+                <div style={{ textAlign:"center", padding:"32px 16px" }}>
+                  <div style={{ fontSize:40, marginBottom:12 }}>🔄</div>
+                  <div style={{ fontWeight:600, marginBottom:12 }}>Sessão expirada</div>
+                  <button onClick={drive.connect} className="btn btn-primary">🔑 Reconectar Drive</button>
+                </div>
+              )}
+
+              {/* Conectado — navegador */}
+              {drive.isConnected && (
+                <>
+                  {/* Breadcrumb */}
+                  <div style={{ display:"flex", alignItems:"center", gap:4, marginBottom:12, fontSize:12, color:"var(--muted)", flexWrap:"wrap" }}>
+                    {driveStack.map((s, i) => (
+                      <span key={s.id} style={{ display:"flex", alignItems:"center", gap:4 }}>
+                        {i > 0 && <span>/</span>}
+                        <span
+                          style={{ color: i === driveStack.length - 1 ? "var(--text)" : "var(--accent-light)", cursor: i < driveStack.length - 1 ? "pointer" : "default" }}
+                          onClick={() => i < driveStack.length - 1 && setDriveStack(driveStack.slice(0, i + 1))}
+                        >{s.name}</span>
+                      </span>
+                    ))}
+                    {driveStack.length > 1 && (
+                      <button className="btn btn-ghost btn-sm" style={{ marginLeft:"auto", padding:"2px 8px", fontSize:11 }}
+                        onClick={() => setDriveStack(s => s.slice(0, -1))}>← Voltar</button>
+                    )}
+                  </div>
+
+                  {driveLoading && (
+                    <div style={{ textAlign:"center", padding:32, color:"var(--muted)" }}>
+                      <span className="spinner" style={{ width:20, height:20, display:"inline-block" }} />
+                      <div style={{ marginTop:8, fontSize:13 }}>Carregando...</div>
+                    </div>
+                  )}
+
+                  {!driveLoading && (
+                    <>
+                      {/* Pastas */}
+                      {driveFolders.map(f => (
+                        <div key={f.id} onClick={() => setDriveStack(s => [...s, { id: f.id, name: f.name }])}
+                          style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 12px", borderRadius:8, cursor:"pointer", fontSize:13 }}
+                          onMouseEnter={e => e.currentTarget.style.background="rgba(255,255,255,0.04)"}
+                          onMouseLeave={e => e.currentTarget.style.background="transparent"}>
+                          <span style={{ fontSize:18 }}>📁</span>
+                          <span style={{ flex:1 }}>{f.name}</span>
+                          <span style={{ color:"var(--muted)", fontSize:12 }}>▸</span>
+                        </div>
+                      ))}
+
+                      {/* Separador */}
+                      {driveFolders.length > 0 && driveCsvs.length > 0 && (
+                        <div style={{ height:1, background:"var(--border)", margin:"6px 0" }} />
+                      )}
+
+                      {/* CSVs */}
+                      {driveCsvs.map(f => (
+                        <div key={f.id} onClick={() => handleImportFromDrive(f)}
+                          style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 12px", borderRadius:8, cursor:"pointer", fontSize:13, border:"1px solid transparent" }}
+                          onMouseEnter={e => { e.currentTarget.style.background="rgba(124,92,252,0.08)"; e.currentTarget.style.borderColor="rgba(124,92,252,0.3)"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background="transparent"; e.currentTarget.style.borderColor="transparent"; }}>
+                          <span style={{ fontSize:18 }}>📄</span>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ fontWeight:500, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{f.name}</div>
+                            {f.size > 0 && <div style={{ fontSize:10, color:"var(--muted)" }}>{(f.size / 1024).toFixed(1)} KB</div>}
+                          </div>
+                          <span style={{ fontSize:11, color:"var(--accent-light)", flexShrink:0 }}>Importar →</span>
+                        </div>
+                      ))}
+
+                      {driveFolders.length === 0 && driveCsvs.length === 0 && (
+                        <div style={{ textAlign:"center", padding:32, color:"var(--muted)", fontSize:13 }}>Nenhum CSV ou pasta encontrada aqui.</div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
