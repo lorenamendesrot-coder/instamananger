@@ -403,6 +403,7 @@ function AppShell() {
   const { oauthUrl }         = useOAuthUrl();
 
   const { status: oauthStatus, openPopup, reset: resetOauth } = useOAuthPopup({
+    flow: "instagram",
     onAccounts: async (accs) => {
       try {
         showToast("success", `✅ ${accs.length} conta(s) conectada(s)! Salvando...`);
@@ -417,6 +418,26 @@ function AppShell() {
     onError: (err) => {
       if (err !== "popup_blocked" && err !== "Login cancelado.") {
         showToast("error", "Erro no login: " + (err || "Tente novamente."));
+      }
+    },
+  });
+
+  const { status: fbStatus, openPopup: openFbPopup, reset: resetFb } = useOAuthPopup({
+    flow: "facebook",
+    onAccounts: async (accs) => {
+      try {
+        showToast("success", `✅ ${accs.length} conta(s) do Facebook conectada(s)! Salvando...`);
+        await addAccounts(accs);
+        showToast("success", `✅ ${accs.length} conta(s) salvas com sucesso!`);
+        resetFb();
+      } catch (err) {
+        showToast("error", "Erro ao salvar contas: " + err.message);
+        resetFb();
+      }
+    },
+    onError: (err) => {
+      if (err !== "popup_blocked" && err !== "Login cancelado.") {
+        showToast("error", "Erro no login Facebook: " + (err || "Tente novamente."));
       }
     },
   });
@@ -465,15 +486,32 @@ function AppShell() {
             <span style={{ fontWeight: 700, fontSize: 14 }}>Insta Manager</span>
             {syncing && <span style={{ color: "var(--accent-light)", animation: "spin 1s linear infinite", display: "inline-block", fontSize: 14 }}>⟳</span>}
           </div>
-          <button
-            onClick={oauthStatus === "waiting" ? undefined : openPopup}
-            disabled={oauthStatus === "waiting" || oauthStatus === "saving"}
-            style={{ fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 8, background: "linear-gradient(135deg, var(--accent), #9b4dfc)", color: "#fff", border: "none", cursor: oauthStatus === "waiting" ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6, opacity: oauthStatus === "waiting" || oauthStatus === "saving" ? 0.7 : 1 }}
-          >
-            {oauthStatus === "waiting" ? <><span className="spinner" style={{ width: 11, height: 11, borderTopColor: "#fff" }} /> Aguardando...</>
-            : oauthStatus === "saving"  ? <><span className="spinner" style={{ width: 11, height: 11, borderTopColor: "#fff" }} /> Salvando...</>
-            : "+ Conta"}
-          </button>
+          <div style={{ display: "flex", gap: 6 }}>
+            {/* Botão Instagram */}
+            <button
+              onClick={oauthStatus === "waiting" ? undefined : openPopup}
+              disabled={oauthStatus === "waiting" || oauthStatus === "saving"}
+              title="Conectar via Instagram"
+              style={{ fontSize: 12, fontWeight: 600, padding: "6px 10px", borderRadius: 8, background: "linear-gradient(135deg, #e1306c, #9b4dfc)", color: "#fff", border: "none", cursor: oauthStatus === "waiting" ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 5, opacity: oauthStatus === "waiting" || oauthStatus === "saving" ? 0.7 : 1 }}
+            >
+              {oauthStatus === "waiting" ? <><span className="spinner" style={{ width: 11, height: 11, borderTopColor: "#fff" }} /></>
+              : oauthStatus === "saving"  ? <><span className="spinner" style={{ width: 11, height: 11, borderTopColor: "#fff" }} /></>
+              : "📷"}
+              {oauthStatus === "waiting" ? " Aguardando..." : oauthStatus === "saving" ? " Salvando..." : " Instagram"}
+            </button>
+            {/* Botão Facebook */}
+            <button
+              onClick={fbStatus === "waiting" ? undefined : openFbPopup}
+              disabled={fbStatus === "waiting" || fbStatus === "saving"}
+              title="Conectar via Facebook"
+              style={{ fontSize: 12, fontWeight: 600, padding: "6px 10px", borderRadius: 8, background: fbStatus === "waiting" || fbStatus === "saving" ? "#1877f2cc" : "#1877f2", color: "#fff", border: "none", cursor: fbStatus === "waiting" ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 5, opacity: fbStatus === "waiting" || fbStatus === "saving" ? 0.7 : 1 }}
+            >
+              {fbStatus === "waiting" ? <><span className="spinner" style={{ width: 11, height: 11, borderTopColor: "#fff" }} /></>
+              : fbStatus === "saving"  ? <><span className="spinner" style={{ width: 11, height: 11, borderTopColor: "#fff" }} /></>
+              : "f"}
+              {fbStatus === "waiting" ? " Aguardando..." : fbStatus === "saving" ? " Salvando..." : " Facebook"}
+            </button>
+          </div>
         </div>
 
         <MobileBottomNav />
