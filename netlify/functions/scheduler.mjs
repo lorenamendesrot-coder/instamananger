@@ -629,8 +629,13 @@ export default async function handler(request) {
   const STUCK_MS_VF          = 15 * 60 * 1000;
 
   const stuckItems = queue.filter((x) => {
-    if (x.status !== "running" || !x.startedAt) return false;
-    const age = now - new Date(x.startedAt).getTime();
+    if (x.status !== "running") return false;
+    // Usa startedAt se disponível; senão cai para scheduledAt ou createdAt como
+    // estimativa conservadora — garante que itens legados (sem startedAt) também
+    // sejam detectados e resetados em vez de ficarem presos para sempre.
+    const ref = x.startedAt || x.scheduledAt || x.createdAt;
+    if (!ref) return false;
+    const age = now - new Date(ref).getTime();
     if (x.type === "per_account") return age > STUCK_MS_PERACCCOUNT;
     if (x.type === "video_finish") return age > STUCK_MS_VF;
     return age > STUCK_MS_VF; // grupos e legados
@@ -663,7 +668,7 @@ export default async function handler(request) {
 
   await runConcurrent(
     dueNormal,
-    (item) => processItem(store, item),
+    (item) => processItem(store, { ...item, startedAt: new Date().toISOString() }),
     5,
   );
   await runConcurrent(
