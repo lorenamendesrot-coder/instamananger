@@ -348,7 +348,7 @@ export default function DrivePicker({ accounts: allAccounts = [], onSchedule, on
                   {csvs.map(f => {
                     const isXlsx = f.name.toLowerCase().endsWith(".xlsx") || f.name.toLowerCase().endsWith(".xls");
                     return (
-                    <div key={f.id} onClick={() => onPick?.([f])}
+                    <div key={f.id} onClick={async () => { const tok = await drive.getValidToken().catch(()=>null); onPick?.([f], tok); }}
                       style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,cursor:"pointer",fontSize:13,border:"1px solid transparent",transition:"all 0.12s"}}
                       onMouseEnter={e=>{e.currentTarget.style.background="rgba(124,92,252,0.08)";e.currentTarget.style.borderColor="rgba(124,92,252,0.3)";}}
                       onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";}}>

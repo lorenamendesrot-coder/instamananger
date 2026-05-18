@@ -626,17 +626,24 @@ export default function Contingency() {
     setTimeout(() => setToastMsg(null), 3200);
   }, []);
 
-  // Callback quando o DrivePicker entrega um CSV selecionado
-  const handlePickFromDrive = useCallback(async (files) => {
-    const csvFile = files?.[0]; if (!csvFile) return;
+  // Callback quando o DrivePicker entrega um arquivo selecionado
+  const handlePickFromDrive = useCallback(async (files, accessToken) => {
+    const file = files?.[0]; if (!file) return;
     setDrivePickerOpen(false);
     setImporting(true);
     try {
-      // Baixa o conteúdo do arquivo via Drive API usando o driveProxy já existente
-      const res = await fetch(`/api/drive-proxy?id=${csvFile.id}`);
+      if (!accessToken) throw new Error("Sessão do Drive expirada. Reconecte o Drive.");
+      // Baixa diretamente da Google Drive API usando o access_token do usuário
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (res.status === 401) throw new Error("Token do Drive expirado. Reconecte o Drive.");
+      if (res.status === 403) throw new Error("Sem permissão para acessar este arquivo.");
+      if (res.status === 404) throw new Error("Arquivo não encontrado no Drive.");
       if (!res.ok) throw new Error(`Erro ao baixar arquivo: HTTP ${res.status}`);
       const arrayBuffer = await res.arrayBuffer();
-      const rows = await parseDriveFile(arrayBuffer, csvFile.name);
+      const rows = await parseDriveFile(arrayBuffer, file.name);
       if (!rows.length) { showToast("error", "Nenhuma conta encontrada no CSV."); return; }
       const now = new Date().toISOString();
       const created = await Promise.all(rows.map((row) => saveAccount({
