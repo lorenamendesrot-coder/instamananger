@@ -110,41 +110,44 @@ export const handler = async (event) => {
   const { pending = [], accounts = [] } = body;
   if (!pending.length) return { statusCode: 400, headers, body: JSON.stringify({ error: "Nenhum item pendente" }) };
 
-  console.log(`[publish-finish] processando ${pending.length} item(s) pendente(s)`);
+  console.log(`[publish-finish] processando ${pending.length} item(s) em paralelo`);
 
-  const results = [];
+  // Processa todas as contas em paralelo — reduz latência de N*T para T
+  const settled = await Promise.allSettled(
+    pending.map(async (item) => {
+      const { account_id, creation_id } = item;
+      const account    = accounts.find((a) => a.id === account_id);
+      const freshToken = await getFreshToken(account_id);
+      const token      = freshToken || account?.access_token;
 
-  for (const item of pending) {
-    const { account_id, creation_id } = item;
-    const account = accounts.find((a) => a.id === account_id);
+      if (!token || !creation_id) {
+        console.error(`[publish-finish] token ou creation_id ausente para ${account_id}`);
+        return { account_id, username: item.username || account?.username, success: false, error: "Token ou creation_id ausente" };
+      }
 
-    const freshToken = await getFreshToken(account_id);
-    const token      = freshToken || account?.access_token;
+      const check = await checkContainer(creation_id, token);
 
-    if (!token || !creation_id) {
-      console.error(`[publish-finish] token ou creation_id ausente para ${account_id}`);
-      results.push({ account_id, username: item.username || account?.username, success: false, error: "Token ou creation_id ausente" });
-      continue;
-    }
+      if (check.not_ready) {
+        console.log(`[publish-finish] @${item.username} ainda IN_PROGRESS`);
+        return null; // null = não pronto, scheduler vai reagendar
+      }
 
-    const check = await checkContainer(creation_id, token);
+      if (check.expired || (!check.ready && check.error)) {
+        return { account_id, username: item.username || account?.username, success: false, error: check.error };
+      }
 
-    if (check.not_ready) {
-      console.log(`[publish-finish] @${item.username} ainda IN_PROGRESS — scheduler vai tentar novamente`);
-      // Não adiciona nada em results → o scheduler interpreta como "ainda não pronto"
-      continue;
-    }
+      if (check.ready) {
+        return await tryPublish(account_id, creation_id, token, item.username || account?.username);
+      }
 
-    if (check.expired || (!check.ready && check.error)) {
-      results.push({ account_id, username: item.username || account?.username, success: false, error: check.error });
-      continue;
-    }
+      return null;
+    })
+  );
 
-    if (check.ready) {
-      const result = await tryPublish(account_id, creation_id, token, item.username || account?.username);
-      results.push(result);
-    }
-  }
+  // Filtra resultados: null = ainda processando (não inclui em results)
+  const results = settled
+    .filter((s) => s.status === "fulfilled" && s.value !== null)
+    .map((s) => s.value);
 
   return { statusCode: 200, headers, body: JSON.stringify({ results }) };
 };
