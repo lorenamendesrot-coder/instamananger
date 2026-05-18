@@ -348,11 +348,11 @@ export default function Dashboard() {
                   <img src={acc.profile_picture} alt="" style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover" }} />
                 ) : (
                   <div style={{ width: 24, height: 24, borderRadius: "50%", background: "linear-gradient(135deg, var(--accent), #9b4dfc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#fff", fontWeight: 700 }}>
-                    {(acc.nickname || acc.name || acc.username || "?")[0].toUpperCase()}
+                    {(acc.nickname || acc.username || acc.name || "?")[0].toUpperCase()}
                   </div>
                 )}
                 <div>
-                  <div style={{ fontSize: 12, fontWeight: 600 }}>{acc.nickname || acc.name || acc.username}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>{acc.nickname || acc.username || acc.name}</div>
                   <div style={{ fontSize: 10, color: "var(--muted)" }}>
                     {acc.followers_count ? fmt(acc.followers_count) + " seguidores" : "@" + (acc.username || acc.id)}
                   </div>

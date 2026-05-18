@@ -335,6 +335,8 @@ export default function Accounts() {
           media_count:     json.media_count     ?? acc.media_count,
         };
         await dbPut("sessions", updatedAcc);
+        // Persiste followers_count atualizado no Netlify Blobs para não perder ao trocar de aba
+        await addAccounts([updatedAcc]).catch(() => {});
         setProfileData((p) => ({ ...p, [acc.id]: json }));
         return { id: acc.id, data: json };
       }
@@ -344,7 +346,7 @@ export default function Accounts() {
     } finally {
       setLoadingIns((p) => ({ ...p, [acc.id]: false }));
     }
-  }, []);
+  }, [addAccounts]);
 
   // Atualizar todas as contas de uma vez
   const handleRefreshAll = async () => {
