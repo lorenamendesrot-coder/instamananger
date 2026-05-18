@@ -391,7 +391,7 @@ function AppShell() {
   const { toast, showToast } = useToast();
   const { oauthUrl }         = useOAuthUrl();
 
-  const { status: oauthStatus, openPopup, openPopupApp2, reset: resetOauth } = useOAuthPopup({
+  const { status: oauthStatus, openPopup, reset: resetOauth } = useOAuthPopup({
     onAccounts: async (accs) => {
       try {
         showToast("success", `✅ ${accs.length} conta(s) conectada(s)! Salvando...`);
@@ -403,24 +403,7 @@ function AppShell() {
         resetOauth();
       }
     },
-    // App 2: faz merge do token_app2 nas contas existentes (identifica pelo id)
-    onApp2Accounts: async (accs) => {
-      try {
-        // accs já vem com token_app2 definido pelo auth-callback (isApp2=true)
-        showToast("success", `🔄 Vinculando App 2 em ${accs.length} conta(s)...`);
-        await addAccounts(accs); // addAccounts faz merge por id → preserva access_token original
-        showToast("success", `✅ App 2 vinculado! Fallback automático ativo para essas contas.`);
-        resetOauth();
-      } catch (err) {
-        showToast("error", "Erro ao vincular App 2: " + err.message);
-        resetOauth();
-      }
-    },
     onError: (err) => {
-      if (err === "app2_not_configured") {
-        showToast("error", "App 2 não configurado. Adicione VITE_META_APP_ID_2 nas variáveis de ambiente do Netlify.");
-        return;
-      }
       if (err !== "popup_blocked" && err !== "Login cancelado.") {
         showToast("error", "Erro no login: " + (err || "Tente novamente."));
       }

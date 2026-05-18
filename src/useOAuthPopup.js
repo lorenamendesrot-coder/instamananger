@@ -26,19 +26,19 @@ const IG_SCOPE = [
   "instagram_business_manage_messages",
 ].join(",");
 
-function buildOAuthUrl(flow, appId, isApp2 = false) {
-  const stateParam = isApp2 ? "popup_app2" : "popup";
+function buildOAuthUrl(flow, appId) {
   if (flow === "instagram") {
     const redirect = encodeURIComponent(window.location.origin + "/api/auth-callback-ig");
-    return `https://www.instagram.com/oauth/authorize?client_id=${appId}&redirect_uri=${redirect}&scope=${IG_SCOPE}&response_type=code&state=${stateParam}`;
+    // ✅ URL correta: www.instagram.com (não api.instagram.com)
+    return `https://www.instagram.com/oauth/authorize?client_id=${appId}&redirect_uri=${redirect}&scope=${IG_SCOPE}&response_type=code&state=popup`;
   }
-  // facebook
+  // facebook (padrão legado)
   const redirect = encodeURIComponent(window.location.origin + "/api/auth-callback");
-  return `https://www.facebook.com/v21.0/dialog/oauth?client_id=${appId}&redirect_uri=${redirect}&scope=${FB_SCOPE}&response_type=code&state=${stateParam}`;
+  return `https://www.facebook.com/v21.0/dialog/oauth?client_id=${appId}&redirect_uri=${redirect}&scope=${FB_SCOPE}&response_type=code&state=popup`;
 }
 
 // flow: "instagram" | "facebook"  (padrão: "instagram")
-export function useOAuthPopup({ onAccounts, onApp2Accounts, onError, flow = "instagram" }) {
+export function useOAuthPopup({ onAccounts, onError, flow = "instagram" }) {
   const [status,   setStatus]   = useState("idle"); // idle | waiting | saving | done | error
   const [errorMsg, setErrorMsg] = useState(null);
   const popupRef = useRef(null);
@@ -57,18 +57,6 @@ export function useOAuthPopup({ onAccounts, onApp2Accounts, onError, flow = "ins
         onAccounts(accounts);
       }
 
-      // Resposta do App 2 — salva como token_app2 nas contas existentes
-      if (type === "OAUTH_APP2_ACCOUNTS" && accounts) {
-        closePopup();
-        setStatus("saving");
-        if (onApp2Accounts) {
-          onApp2Accounts(accounts);
-        } else {
-          // fallback: trata igual ao App 1 se não houver handler específico
-          onAccounts(accounts);
-        }
-      }
-
       if (type === "OAUTH_ERROR") {
         closePopup();
         setStatus("error");
@@ -79,7 +67,7 @@ export function useOAuthPopup({ onAccounts, onApp2Accounts, onError, flow = "ins
 
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [onAccounts, onApp2Accounts, onError]);
+  }, [onAccounts, onError]);
 
   const closePopup = useCallback(() => {
     if (timerRef.current)  clearInterval(timerRef.current);
@@ -87,8 +75,15 @@ export function useOAuthPopup({ onAccounts, onApp2Accounts, onError, flow = "ins
     popupRef.current = null;
   }, []);
 
-  const _openPopupWithAppId = useCallback((appId, isApp2 = false) => {
-    const url = buildOAuthUrl(flow, appId, isApp2);
+  const openPopup = useCallback(() => {
+    // Para o fluxo Instagram, usa VITE_META_IG_APP_ID (Instagram App ID separado)
+    // Para Facebook, usa VITE_META_APP_ID (Facebook App ID)
+    const appId = flow === "instagram"
+      ? (import.meta.env.VITE_META_IG_APP_ID || import.meta.env.VITE_META_APP_ID)
+      : (import.meta.env.VITE_META_FB_APP_ID || import.meta.env.VITE_META_APP_ID);
+
+    const url   = buildOAuthUrl(flow, appId);
+
     const w = 520, h = 680;
     const left = Math.round(window.screenX + (window.outerWidth  - w) / 2);
     const top  = Math.round(window.screenY + (window.outerHeight - h) / 2);
@@ -110,6 +105,7 @@ export function useOAuthPopup({ onAccounts, onApp2Accounts, onError, flow = "ins
     setStatus("waiting");
     setErrorMsg(null);
 
+    // Verifica a cada 500ms se o popup fechou sem completar
     timerRef.current = setInterval(() => {
       if (popup.closed) {
         clearInterval(timerRef.current);
@@ -123,30 +119,7 @@ export function useOAuthPopup({ onAccounts, onApp2Accounts, onError, flow = "ins
         popupRef.current = null;
       }
     }, 500);
-  }, [flow, onError]);
-
-  const openPopup = useCallback(() => {
-    const appId = flow === "instagram"
-      ? (import.meta.env.VITE_META_IG_APP_ID || import.meta.env.VITE_META_APP_ID)
-      : (import.meta.env.VITE_META_FB_APP_ID || import.meta.env.VITE_META_APP_ID);
-    _openPopupWithAppId(appId, false);
-  }, [flow, _openPopupWithAppId]);
-
-  // Abre popup usando o App 2 — state=popup_app2
-  // O backend detecta isso e retorna OAUTH_APP2_ACCOUNTS
-  const openPopupApp2 = useCallback(() => {
-    const appId2 = flow === "instagram"
-      ? (import.meta.env.VITE_META_IG_APP_ID_2 || import.meta.env.VITE_META_APP_ID_2)
-      : (import.meta.env.VITE_META_FB_APP_ID_2 || import.meta.env.VITE_META_APP_ID_2);
-
-    if (!appId2) {
-      onError?.("app2_not_configured");
-      setStatus("error");
-      setErrorMsg("App 2 não configurado. Adicione VITE_META_APP_ID_2 nas variáveis de ambiente.");
-      return;
-    }
-    _openPopupWithAppId(appId2, true);
-  }, [flow, _openPopupWithAppId, onError]);
+  }, [flow, onAccounts, onError]);
 
   const reset = useCallback(() => {
     closePopup();
@@ -154,5 +127,5 @@ export function useOAuthPopup({ onAccounts, onApp2Accounts, onError, flow = "ins
     setErrorMsg(null);
   }, [closePopup]);
 
-  return { status, errorMsg, openPopup, openPopupApp2, reset };
+  return { status, errorMsg, openPopup, reset };
 }

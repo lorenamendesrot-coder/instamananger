@@ -24,22 +24,9 @@ function getAccountsStore() {
   });
 }
 
-// Retorna as credenciais corretas: App 2 se o token é token_app2, App 1 caso contrário
-function getAppCreds(isApp2Token) {
-  if (isApp2Token) {
-    return {
-      APP_ID:     process.env.META_APP_ID_2     || process.env.META_IG_APP_ID_2     || process.env.META_APP_ID,
-      APP_SECRET: process.env.META_APP_SECRET_2 || process.env.META_IG_APP_SECRET_2 || process.env.META_APP_SECRET,
-    };
-  }
-  return {
-    APP_ID:     process.env.META_APP_ID,
-    APP_SECRET: process.env.META_APP_SECRET,
-  };
-}
-
-async function debugToken(token, isApp2Token = false) {
-  const { APP_ID, APP_SECRET } = getAppCreds(isApp2Token);
+async function debugToken(token) {
+  const APP_ID     = process.env.META_APP_ID;
+  const APP_SECRET = process.env.META_APP_SECRET;
   try {
     // Tokens do Instagram Login (IGAA) são validados pelo graph.instagram.com
     if (isIGToken(token)) {
@@ -59,8 +46,9 @@ async function debugToken(token, isApp2Token = false) {
   }
 }
 
-async function tryRefresh(token, isApp2Token = false) {
-  const { APP_ID, APP_SECRET } = getAppCreds(isApp2Token);
+async function tryRefresh(token) {
+  const APP_ID     = process.env.META_APP_ID;
+  const APP_SECRET = process.env.META_APP_SECRET;
   try {
     // Tokens do Instagram Login renovam via graph.instagram.com
     if (isIGToken(token)) {
@@ -95,12 +83,10 @@ export const handler = async (event) => {
     ).filter(Boolean);
 
     const results = await Promise.all(accounts.map(async (acc) => {
-      // Suporta token_app2 (contas conectadas via App 2 pelo Facebook)
-      const isApp2Token = !acc.access_token && !!acc.token_app2;
-      const token = acc.access_token || acc.token_app2;
+      const token = acc.access_token;
       if (!token) return { id: acc.id, username: acc.username, error: "sem token salvo" };
 
-      const debug = await debugToken(token, isApp2Token);
+      const debug = await debugToken(token);
 
       const isValid    = debug.is_valid === true;
       const expiresAt  = debug.expires_at  // unix timestamp, 0 = nunca expira
@@ -115,15 +101,12 @@ export const handler = async (event) => {
       let refreshResult = null;
       // Tenta renovar se válido e com menos de 30 dias ou expirado
       if (isValid && (daysLeft === null || daysLeft < 30)) {
-        const refreshed = await tryRefresh(token, isApp2Token);
+        const refreshed = await tryRefresh(token);
         if (refreshed.access_token && refreshed.access_token !== token) {
-          // Salva o token renovado no Blobs no campo correto (access_token ou token_app2)
-          const tokenUpdate = isApp2Token
-            ? { token_app2: refreshed.access_token }
-            : { access_token: refreshed.access_token };
+          // Salva o token renovado no Blobs
           await store.setJSON(`account-${acc.id}`, {
             ...acc,
-            ...tokenUpdate,
+            access_token: refreshed.access_token,
             token_refreshed_at: new Date().toISOString(),
             token_status: "valid",
             updated_at: new Date().toISOString(),

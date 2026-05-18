@@ -1,22 +1,31 @@
-// auth-callback-ig.mjs — OAuth via Instagram Business Login
-// Ref: https://developers.facebook.com/docs/instagram/platform/instagram-api/business-login
+// auth-callback-ig.mjs — OAuth via Instagram Login (sem Página do Facebook)
+// Lançado em julho/2024 pela Meta como alternativa ao Facebook Login.
+// Funciona com contas Business e Creator diretamente — zero dependência de Página.
 //
 // Fluxo:
 //   1. Frontend abre popup → www.instagram.com/oauth/authorize
-//   2. Usuário autoriza
-//   3. Instagram redireciona com ?code=...&state=popup
-//   4. POST api.instagram.com/oauth/access_token  → token curto
-//      Resposta: { "data": [{ "access_token": "...", "user_id": "..." }] }
-//   5. GET graph.instagram.com/access_token?grant_type=ig_exchange_token → token longo
-//   6. GET graph.instagram.com/me?fields=...&access_token=... → perfil
-//   7. postMessage ao popup pai
+//   2. Usuário autoriza no Instagram
+//   3. Instagram redireciona para esta função com ?code=...&state=popup
+//   4. Trocamos o code por token curto  (api.instagram.com/oauth/access_token)
+//   5. Trocamos por token longo 60 dias (graph.instagram.com/access_token)
+//   6. Buscamos perfil em              (graph.instagram.com/me)
+//   7. Retornamos postMessage ao popup pai
 
 const IG_AUTH  = "https://api.instagram.com";
-const IG_GRAPH = "https://graph.instagram.com"; // sem versão — endpoints do IG Login não usam /v21.0
+const IG_GRAPH = "https://graph.instagram.com";
 
-// Campos suportados pelo Instagram Business Login
-// biography, website, follows_count podem não estar disponíveis dependendo das permissões
-const IG_FIELDS = "id,username,name,profile_picture_url,followers_count,media_count";
+const IG_FIELDS = [
+  "id",
+  "username",
+  "name",
+  "biography",
+  "website",
+  "profile_picture_url",
+  "followers_count",
+  "follows_count",
+  "media_count",
+  "account_type",
+].join(",");
 
 async function apiFetch(url, options = {}) {
   const res  = await fetch(url, options);
@@ -28,35 +37,35 @@ export const handler = async (event) => {
   const params  = event.queryStringParameters || {};
   const code    = params.code;
   const state   = params.state;
-  const isPopup = state === "popup" || state === "popup_app2";
-  const isApp2  = state === "popup_app2";
+  const isPopup = state === "popup";
 
+  // Erro direto do Instagram (usuário cancelou, etc.)
   if (params.error) {
     const reason = params.error_description || params.error || "Acesso negado";
-    return respondWith({ error: reason }, isPopup, isApp2);
+    return respondWith({ error: reason }, isPopup);
   }
 
   if (!code) {
-    return respondWith({ error: "Código de autorização ausente" }, isPopup, isApp2);
+    return respondWith({ error: "Código de autorização ausente" }, isPopup);
   }
 
-  const APP_ID     = isApp2
-    ? (process.env.META_IG_APP_ID_2 || process.env.META_APP_ID_2 || process.env.META_IG_APP_ID || process.env.META_APP_ID)
-    : (process.env.META_IG_APP_ID   || process.env.META_APP_ID);
-  const APP_SECRET = isApp2
-    ? (process.env.META_IG_APP_SECRET_2 || process.env.META_APP_SECRET_2 || process.env.META_IG_APP_SECRET || process.env.META_APP_SECRET)
-    : (process.env.META_IG_APP_SECRET   || process.env.META_APP_SECRET);
-  const REDIRECT_URI = isApp2
-    ? (process.env.META_REDIRECT_URI_IG_2 || process.env.META_REDIRECT_URI_IG)
-    : (process.env.META_REDIRECT_URI_IG || (process.env.URL ? process.env.URL + "/api/auth-callback-ig" : ""));
+  // ✅ Usa META_IG_APP_ID e META_IG_APP_SECRET para o fluxo Instagram Login
+  // (IDs separados do Facebook Login — configurados no painel do app no Meta)
+  const APP_ID     = process.env.META_IG_APP_ID     || process.env.META_APP_ID;
+  const APP_SECRET = process.env.META_IG_APP_SECRET  || process.env.META_APP_SECRET;
+
+  // Usa META_REDIRECT_URI_IG diretamente — deve ser a URL exata cadastrada no Meta:
+  // ex: https://eclectic-bombolone-29d49b.netlify.app/api/auth-callback-ig
+  const REDIRECT_URI = process.env.META_REDIRECT_URI_IG
+    || (process.env.URL ? process.env.URL + "/api/auth-callback-ig" : "");
 
   if (!APP_ID || !APP_SECRET) {
-    return respondWith({ error: "Configuração do app ausente (META_IG_APP_ID / META_IG_APP_SECRET)" }, isPopup, isApp2);
+    return respondWith({ error: "Configuração do app ausente (META_IG_APP_ID / META_IG_APP_SECRET)" }, isPopup);
   }
 
   try {
-    // ── 1. Trocar code por token curto ────────────────────────────────────
-    const shortRes = await apiFetch(`${IG_AUTH}/oauth/access_token`, {
+    // ── 1. Trocar code por token de curta duração ──────────────────────────
+    const shortData = await apiFetch(`${IG_AUTH}/oauth/access_token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -68,79 +77,70 @@ export const handler = async (event) => {
       }),
     });
 
-    console.log("[auth-callback-ig] short token response:", JSON.stringify(shortRes));
-
-    // Resposta pode ser { data: [{ access_token, user_id }] } ou { access_token } direto
-    let shortToken, userId;
-    if (shortRes.data && Array.isArray(shortRes.data) && shortRes.data[0]?.access_token) {
-      shortToken = shortRes.data[0].access_token;
-      userId     = shortRes.data[0].user_id;
-    } else if (shortRes.access_token) {
-      shortToken = shortRes.access_token;
-      userId     = shortRes.user_id;
-    } else {
-      throw new Error(`Token curto falhou: ${shortRes.error_message || shortRes.error_type || JSON.stringify(shortRes)}`);
+    if (shortData.error_type || shortData.error_message) {
+      throw new Error(`Token curto: ${shortData.error_message || JSON.stringify(shortData)}`);
     }
 
-    // ── 2. Trocar por token longo (60 dias) ───────────────────────────────
-    const longRes = await apiFetch(
+    const shortToken = shortData.access_token;
+    if (!shortToken) throw new Error("Token de curta duração não retornado");
+
+    // ── 2. Trocar por token de LONGA duração (60 dias) ─────────────────────
+    const longData = await apiFetch(
       `${IG_GRAPH}/access_token?grant_type=ig_exchange_token&client_secret=${APP_SECRET}&access_token=${shortToken}`
     );
 
-    console.log("[auth-callback-ig] long token response:", JSON.stringify(longRes));
+    const longToken   = longData.access_token || shortToken;
+    const expiresIn   = longData.expires_in   || null;
+    const expiresAt   = expiresIn
+      ? new Date(Date.now() + expiresIn * 1000).toISOString()
+      : null;
+    const tokenDuration = longData.access_token ? "long-lived" : "short-lived";
 
-    const longToken = longRes.access_token || shortToken;
-    const expiresIn = longRes.expires_in   || null;
-    const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
-
-    // ── 3. Buscar perfil ──────────────────────────────────────────────────
+    // ── 3. Buscar perfil da conta ──────────────────────────────────────────
     const profile = await apiFetch(
       `${IG_GRAPH}/me?fields=${IG_FIELDS}&access_token=${longToken}`
     );
 
-    console.log("[auth-callback-ig] profile response:", JSON.stringify(profile));
-
     if (profile.error) {
-      throw new Error(`Perfil: ${profile.error.message} (code: ${profile.error.code})`);
+      throw new Error(`Perfil: ${profile.error.message}`);
     }
 
-    // Se for App2, salva como token_app2
-    const tokenFields = isApp2
-      ? { token_app2: longToken, token_app2_connected_at: new Date().toISOString() }
-      : { access_token: longToken, token_expires_at: expiresAt, token_status: "active", added_via: "instagram_login" };
-
     const account = {
-      id:               String(profile.id || userId),
-      username:         profile.username        || "",
-      name:             profile.name            || profile.username || "",
-      biography:        profile.biography       || "",
-      website:          profile.website         || "",
+      id:               profile.id,
+      username:         profile.username         || "",
+      name:             profile.name             || profile.username || "",
+      biography:        profile.biography        || "",
+      website:          profile.website          || "",
       profile_picture:  profile.profile_picture_url || "",
-      account_type:     "BUSINESS",
-      followers_count:  profile.followers_count ?? null,
-      follows_count:    profile.follows_count   ?? null,
-      media_count:      profile.media_count     ?? null,
-      ...tokenFields,
-      added_via:        "instagram_login",
+      account_type:     profile.account_type     || "BUSINESS",
+      followers_count:  profile.followers_count  ?? null,
+      follows_count:    profile.follows_count    ?? null,
+      media_count:      profile.media_count      ?? null,
+      access_token:     longToken,
+      token_duration:   tokenDuration,
+      token_expires_at: expiresAt,
+      token_status:     "active",
+      added_via:        "instagram_login",   // ← identifica o fluxo
       page_id:          null,
       page_name:        null,
-      ...(isApp2 ? {} : { connected_at: new Date().toISOString() }),
+      connected_at:     new Date().toISOString(),
     };
 
-    return respondWith({ accounts: [account] }, isPopup, isApp2);
+    return respondWith({ accounts: [account] }, isPopup);
 
   } catch (err) {
     console.error("[auth-callback-ig] error:", err);
-    return respondWith({ error: err.message }, isPopup, isApp2);
+    return respondWith({ error: err.message }, isPopup);
   }
 };
 
-function respondWith({ accounts, error }, isPopup, isApp2 = false) {
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function respondWith({ accounts, error }, isPopup) {
   if (isPopup) {
-    const msgType = isApp2 ? "OAUTH_APP2_ACCOUNTS" : "OAUTH_ACCOUNTS";
     const payload = accounts
-      ? JSON.stringify({ type: msgType, accounts })
-      : JSON.stringify({ type: "OAUTH_ERROR", error: error || "Erro desconhecido" });
+      ? JSON.stringify({ type: "OAUTH_ACCOUNTS", accounts })
+      : JSON.stringify({ type: "OAUTH_ERROR",    error: error || "Erro desconhecido" });
 
     const html = `<!DOCTYPE html>
 <html>
@@ -158,8 +158,8 @@ function respondWith({ accounts, error }, isPopup, isApp2 = false) {
 <div class="box">
   ${accounts
     ? `<div class="ok">✅</div>
-       <h2>${isApp2 ? "App 2 vinculado!" : (accounts[0]?.username ? "@" + accounts[0].username : "Conta") + " conectada!"}</h2>
-       <p>${isApp2 ? "Fallback automático ativo." : "Fechando automaticamente..."}</p>`
+       <h2>${accounts[0]?.username ? "@" + accounts[0].username : "Conta"} conectada!</h2>
+       <p>Fechando automaticamente...</p>`
     : `<div class="ok">❌</div>
        <h2>Erro ao conectar</h2>
        <p>${error || "Tente novamente."}</p>`
@@ -183,6 +183,7 @@ function respondWith({ accounts, error }, isPopup, isApp2 = false) {
     };
   }
 
+  // Fallback redirect (sem popup)
   if (accounts) {
     const encoded = Buffer.from(JSON.stringify(accounts)).toString("base64url");
     return { statusCode: 302, headers: { Location: `/?accounts=${encoded}` } };

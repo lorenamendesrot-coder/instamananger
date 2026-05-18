@@ -1,9 +1,9 @@
 // useTokenCheck.js — Verifica validade dos tokens e alerta o usuário proativamente
 import { useEffect, useRef, useCallback } from "react";
+import { dbGetAll, dbPut } from "./useDB.js";
 
 const GRAPH_FB = "https://graph.facebook.com/v21.0";
 const GRAPH_IG = "https://graph.instagram.com/v21.0";
-const API      = "/.netlify/functions/accounts";
 
 // Tokens do Instagram Login começam com "IGAA"
 // Tokens do Facebook Login começam com "EAA"
@@ -16,10 +16,7 @@ const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 async function checkToken(account) {
   try {
-    // Suporta token_app2 (contas conectadas via App 2 pelo Facebook)
-    const token = account.access_token || account.token_app2;
-    if (!token) return "unknown"; // sem token algum — não marcar como expirado
-
+    const token = account.access_token;
     const base  = isIGToken(token) ? GRAPH_IG : GRAPH_FB;
     const res   = await fetch(`${base}/me?fields=id&access_token=${token}`);
     const data  = await res.json();
@@ -28,18 +25,6 @@ async function checkToken(account) {
     return "valid";
   } catch {
     return "unknown"; // falha de rede — não marcar como expirado
-  }
-}
-
-async function saveTokenStatus(acc, status) {
-  try {
-    await fetch(API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accounts: [{ ...acc, token_status: status, updated_at: new Date().toISOString() }] }),
-    });
-  } catch {
-    // silencia falha de rede — o check próximo corrige
   }
 }
 
@@ -57,14 +42,13 @@ export function useTokenCheck({ accounts, onExpired }) {
     for (const acc of accounts) {
       const status = await checkToken(acc);
       if (status === "expired" || status === "invalid") {
-        await saveTokenStatus(acc, "expired");
+        await dbPut("sessions", { ...acc, token_status: "expired" });
         expired.push({ ...acc, token_status: "expired" });
       } else if (status === "valid") {
         if (acc.token_status === "expired") {
-          await saveTokenStatus(acc, "valid");
+          await dbPut("sessions", { ...acc, token_status: "valid" });
         }
       }
-      // status "unknown" → não faz nada, preserva status atual
     }
 
     if (expired.length > 0) {

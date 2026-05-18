@@ -7,30 +7,6 @@ function isIGToken(t) { return t?.startsWith("IGAA"); }
 function graph(t)    { return isIGToken(t) ? GRAPH_IG : GRAPH_FB; }
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
-// ─── Fallback de App Meta por Rate Limit ─────────────────────────────────────
-// Quando o App 1 bate no rate limit da Meta (erro #4, #32 ou #613), o sistema
-// usa automaticamente o token_app2 da conta (se disponível) para repostar.
-//
-// COMO FUNCIONA:
-//   • Cada conta pode ter dois tokens: access_token (App1) e token_app2 (App2).
-//   • token_app2 é gerado quando o usuário reconecta a conta pelo fluxo OAuth
-//     com o segundo app configurado (META_APP_ID_2 / META_APP_SECRET_2).
-//   • Na hora de postar, se App1 der erro #4/#32/#613, o publish tenta com
-//     token_app2 diretamente — sem nenhuma troca de token em tempo real,
-//     pois o App 1 estar bloqueado impediria isso também.
-//
-// COMO ADICIONAR O TOKEN DO APP 2 ÀS CONTAS:
-//   O auth-callback.mjs e auth-callback-ig.mjs precisam ser chamados com o
-//   segundo app configurado. O token retornado é salvo como token_app2
-//   na conta existente (identificada pelo mesmo instagram_id).
-
-// Códigos Meta que indicam throttle a nível de APLICATIVO (não de conta)
-const APP_RATE_LIMIT_CODES = new Set([4, 32, 613]);
-
-function isAppRateLimitError(errorCode) {
-  return APP_RATE_LIMIT_CODES.has(Number(errorCode));
-}
-
 // ─── Conversão de URL do Google Drive ────────────────────────────────────────
 function resolveGoogleDriveUrl(url) {
   if (!url || !url.includes("drive.google.com")) return url;
@@ -153,9 +129,13 @@ async function recordPost(store, id, state, success) {
   await saveState(store, id, state);
 }
 
-// ─── Publicacao por conta (token pode ser sobrescrito pelo fallback) ──────────
-async function publishOneWithToken({ account, token, media_url, media_type, post_type, caption }) {
+// ─── Publicacao por conta ─────────────────────────────────────────────────────
+async function publishOne({ account, media_url, media_type, post_type, caption }) {
+  const token = account.access_token;
+  if (!token) return { success: false, error: "Token nao encontrado. Reconecte a conta." };
+
   const resolved_url = resolveGoogleDriveUrl(media_url);
+
   const isVideo = media_type === "VIDEO";
   let payload = { access_token: token };
 
@@ -172,74 +152,39 @@ async function publishOneWithToken({ account, token, media_url, media_type, post
       : { ...payload, image_url: resolved_url, media_type: "STORIES" };
   }
 
-  const cRes  = await fetch(`${graph(token)}/${account.id}/media`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const cData = await cRes.json();
-  if (cData.error) {
-    let errMsg = cData.error.message;
-    if (cData.error.code === 2207077 || errMsg?.includes("Media upload has failed")) {
-      errMsg = "Instagram não conseguiu baixar o vídeo do Google Drive. Confirme que: 1) O arquivo tem permissão 'Qualquer pessoa com o link pode ver'; 2) O link é compartilhável (não restrito). O sistema já aplica 'confirm=t' automaticamente para contornar a tela de antivírus do Drive.";
-    }
-    return { success: false, error: errMsg, errorCode: cData.error.code };
-  }
-
-  // Vídeos: retorna pending imediatamente — publish-finish cuida do resto
-  if (isVideo || post_type === "REEL") {
-    return { success: false, pending: true, creation_id: cData.id };
-  }
-
-  // Imagens: publica diretamente
-  const pRes  = await fetch(`${graph(token)}/${account.id}/media_publish`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ creation_id: cData.id, access_token: token }),
-  });
-  const pData = await pRes.json();
-  if (pData.error) return { success: false, error: pData.error.message, errorCode: pData.error.code };
-
-  return { success: true, media_id: pData.id, published_at: new Date().toISOString() };
-}
-
-// ─── Publicacao com fallback automático entre tokens de App ───────────────────
-// Tenta com access_token (App1). Se erro #4/#32/#613 e account.token_app2
-// existir, tenta novamente com token_app2 diretamente.
-async function publishOne({ account, media_url, media_type, post_type, caption }) {
-  const token1 = account.access_token;
-  const token2 = account.token_app2 || null;
-
-  if (!token1) return { success: false, error: "Token nao encontrado. Reconecte a conta." };
-
-  // Tentativa 1: App 1 (token principal)
-  const result1 = await publishOneWithToken({ account, token: token1, media_url, media_type, post_type, caption });
-
-  if (result1.success || result1.pending) return { ...result1, app_used: "App1" };
-
-  // Se foi rate limit do app E temos token do App 2 → tenta fallback
-  if (isAppRateLimitError(result1.errorCode) && token2) {
-    console.warn(`[publish] ⚠️ @${account.username}: rate limit App1 (código ${result1.errorCode}) — tentando App2`);
-    try {
-      const result2 = await publishOneWithToken({ account, token: token2, media_url, media_type, post_type, caption });
-      if (result2.success || result2.pending) {
-        console.log(`[publish] ✅ @${account.username}: publicado via App2 (fallback)`);
-        return { ...result2, app_used: "App2" };
+  try {
+    const cRes  = await fetch(`${graph(token)}/${account.id}/media`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const cData = await cRes.json();
+    if (cData.error) {
+      let errMsg = cData.error.message;
+      if (cData.error.code === 2207077 || errMsg?.includes("Media upload has failed")) {
+        errMsg = "Instagram não conseguiu baixar o vídeo do Google Drive. Confirme que: 1) O arquivo tem permissão 'Qualquer pessoa com o link pode ver'; 2) O link é compartilhável (não restrito). O sistema já aplica 'confirm=t' automaticamente para contornar a tela de antivírus do Drive.";
       }
-      // App2 também falhou — retorna o erro do App2 mas informa que os dois falharam
-      return { ...result2, app_used: "App2_fallback_failed", originalError: result1.error };
-    } catch (err) {
-      return { success: false, error: err.message, app_used: "App2_fallback_error", originalError: result1.error };
+      return { success: false, error: errMsg, errorCode: cData.error.code };
     }
-  }
 
-  // Erro não relacionado a rate limit de app, ou sem token_app2 → retorna resultado original
-  if (isAppRateLimitError(result1.errorCode) && !token2) {
-    console.warn(`[publish] ⚠️ @${account.username}: rate limit App1 — sem token_app2 configurado para esta conta`);
-    return { ...result1, app_used: "App1", hint: "Reconecte esta conta pelo App2 para habilitar o fallback automático." };
-  }
+    // Vídeos: retorna pending imediatamente — publish-finish cuida do resto
+    if (isVideo || post_type === "REEL") {
+      return { success: false, pending: true, creation_id: cData.id };
+    }
 
-  return { ...result1, app_used: "App1" };
+    // Imagens: publica diretamente
+    const pRes  = await fetch(`${graph(token)}/${account.id}/media_publish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ creation_id: cData.id, access_token: token }),
+    });
+    const pData = await pRes.json();
+    if (pData.error) return { success: false, error: pData.error.message, errorCode: pData.error.code };
+
+    return { success: true, media_id: pData.id, published_at: new Date().toISOString() };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 }
 
 // ─── Processa uma conta (rate-limit + publish) ────────────────────────────────
@@ -322,8 +267,7 @@ export const handler = async (event) => {
       post_type, captions, default_caption, skip_rate_limit,
     });
     results.push(result);
-    const appTag = result.app_used ? ` [${result.app_used}]` : "";
-    console.log(`[publish] @${batch[i].username}${appTag}: ${result.success ? "✅ ok" : result.rate_limited ? "⏳ rate limited" : `❌ ${result.error}`}`);
+    console.log(`[publish] @${batch[i].username}: ${result.success ? "✅ ok" : result.rate_limited ? "⏳ rate limited" : `❌ ${result.error}`}`);
   }
 
   return {

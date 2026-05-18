@@ -17,13 +17,9 @@ function getAccountsStore() {
   });
 }
 
-async function debugToken(token, isApp2Token = false) {
-  const APP_ID     = isApp2Token
-    ? (process.env.META_APP_ID_2     || process.env.META_IG_APP_ID_2     || process.env.META_APP_ID)
-    : process.env.META_APP_ID;
-  const APP_SECRET = isApp2Token
-    ? (process.env.META_APP_SECRET_2 || process.env.META_IG_APP_SECRET_2 || process.env.META_APP_SECRET)
-    : process.env.META_APP_SECRET;
+async function debugToken(token) {
+  const APP_ID     = process.env.META_APP_ID;
+  const APP_SECRET = process.env.META_APP_SECRET;
   const res  = await fetch(
     `${GRAPH}/debug_token?input_token=${token}&access_token=${APP_ID}|${APP_SECRET}`
   );
@@ -31,13 +27,9 @@ async function debugToken(token, isApp2Token = false) {
   return data.data || data;
 }
 
-async function refreshToken(token, isApp2Token = false) {
-  const APP_ID     = isApp2Token
-    ? (process.env.META_APP_ID_2     || process.env.META_IG_APP_ID_2     || process.env.META_APP_ID)
-    : process.env.META_APP_ID;
-  const APP_SECRET = isApp2Token
-    ? (process.env.META_APP_SECRET_2 || process.env.META_IG_APP_SECRET_2 || process.env.META_APP_SECRET)
-    : process.env.META_APP_SECRET;
+async function refreshToken(token) {
+  const APP_ID     = process.env.META_APP_ID;
+  const APP_SECRET = process.env.META_APP_SECRET;
   const res  = await fetch(
     `${GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${APP_ID}&client_secret=${APP_SECRET}&fb_exchange_token=${token}`
   );
@@ -58,15 +50,11 @@ export default async function handler() {
   for (const { key } of blobs) {
     let acc;
     try { acc = await store.get(key, { type: "json" }); } catch { continue; }
-    if (!acc?.id) continue;
-    // Suporta token_app2 (contas conectadas via App 2 pelo Facebook)
-    const isApp2Token = !acc.access_token && !!acc.token_app2;
-    const token = acc.access_token || acc.token_app2;
-    if (!token) continue;
+    if (!acc?.id || !acc?.access_token) continue;
 
     try {
       // 1. Verificar estado atual do token
-      const debug    = await debugToken(token, isApp2Token);
+      const debug    = await debugToken(acc.access_token);
       const isValid  = debug.is_valid === true;
       const daysLeft = debug.expires_at && debug.expires_at > 0
         ? Math.round((debug.expires_at * 1000 - Date.now()) / 86_400_000)
@@ -90,15 +78,12 @@ export default async function handler() {
 
       // 2. Renovar se faltar menos de 30 dias (ou proativamente sempre)
       // Meta recomenda renovar sempre que possível — tokens de página podem ser estendidos indefinidamente
-      const refreshed = await refreshToken(token, isApp2Token);
+      const refreshed = await refreshToken(acc.access_token);
 
       if (refreshed.access_token) {
-        const tokenUpdate = isApp2Token
-          ? { token_app2: refreshed.access_token }
-          : { access_token: refreshed.access_token };
         await store.setJSON(key, {
           ...acc,
-          ...tokenUpdate,
+          access_token:        refreshed.access_token,
           token_status:        "valid",
           token_refreshed_at:  new Date().toISOString(),
           token_expires_in:    refreshed.expires_in,
