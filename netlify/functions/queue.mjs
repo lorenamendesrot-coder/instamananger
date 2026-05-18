@@ -124,14 +124,25 @@ export default async function handler(req) {
     if (req.method === "GET") {
       const { items } = await readWithEtag(store);
 
-      // Strips campos pesados de sub-itens que o frontend não exibe diretamente
-      // mediaUrls pode ter 120 URLs longas — guardamos só a contagem
-      const slim = items.map((x) => {
+      // Limpeza automática: remove itens done/error/posted com mais de 48h
+      // Evita que o payload cresça indefinidamente e cause ERR_HTTP2_PROTOCOL_ERROR
+      const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+      const active = items.filter((x) => {
+        if (x.status === "done" || x.status === "posted" || x.status === "error") {
+          const ts = x.completedAt || x.failedAt || x.scheduledAt;
+          if (ts && new Date(ts).getTime() < cutoff) return false;
+        }
+        return true;
+      });
+
+      // Strips campos pesados — mediaUrls não é enviado ao frontend (só a contagem)
+      // Isso reduz drasticamente o payload e evita ERR_HTTP2_PROTOCOL_ERROR
+      const slim = active.map((x) => {
         if (x.type === "per_account" || x.type === "video_finish") return x;
         const { mediaUrls, ...rest } = x;
         return {
           ...rest,
-          ...(mediaUrls ? { mediaUrlsCount: mediaUrls.length, mediaUrls } : {}),
+          ...(mediaUrls ? { mediaUrlsCount: mediaUrls.length } : {}),
         };
       });
 

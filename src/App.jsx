@@ -150,19 +150,21 @@ function SchedulerProvider({ addEntry, children }) {
         }
         await qApi.update({ ...item, _historySynced: true }).catch(() => {});
       }
-      if (doneSemHistoria.length > 0) window.dispatchEvent(new CustomEvent("sw:queue-update"));
+      // REMOVIDO: não disparar sw:queue-update de dentro do reload()
+      // Isso causava loop infinito: reload → dispatch → throttle bypass → reload
+      // O SW já emite sw:queue-update no próprio tick dele (a cada 20s)
     } catch (e) { console.warn("[sync-history]", e); }
   }, []);
 
   useEffect(() => {
     reload();
-    // Throttle: ignora eventos sw:queue-update repetidos em menos de 15s
+    // Throttle: ignora eventos sw:queue-update repetidos em menos de 30s
     // O SW emite este evento a cada tick (20s) + a cada video_finish — sem throttle
     // isso causa 3-5 requests/min desnecessários ao Netlify Blob
     let lastReload = 0;
     const h = () => {
       const now = Date.now();
-      if (now - lastReload < 15000) return;
+      if (now - lastReload < 30000) return;
       lastReload = now;
       reload();
     };
