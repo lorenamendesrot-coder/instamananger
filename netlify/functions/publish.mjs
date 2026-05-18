@@ -7,6 +7,66 @@ function isIGToken(t) { return t?.startsWith("IGAA"); }
 function graph(t)    { return isIGToken(t) ? GRAPH_IG : GRAPH_FB; }
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
+// ─── Configuração dos dois Apps Meta ─────────────────────────────────────────
+// App 1 (principal): META_APP_ID + META_APP_SECRET  (ou META_FB_APP_ID etc.)
+// App 2 (fallback) : META_APP_ID_2 + META_APP_SECRET_2
+//
+// Códigos de erro que indicam rate limit a NÍVEL DE APLICATIVO (não de conta):
+//   4   → Application Request Limit Reached
+//   32  → Page-level throttling / app rate limit
+//   613 → Calls to this api have exceeded the rate limit
+// Quando detectados, o sistema tenta automaticamente renovar o token
+// do usuário usando o App 2 e repostar.
+
+const META_APP_CONFIGS = [
+  {
+    label:     "App1",
+    appId:     process.env.META_APP_ID     || process.env.META_FB_APP_ID,
+    appSecret: process.env.META_APP_SECRET || process.env.META_FB_APP_SECRET,
+  },
+  {
+    label:     "App2",
+    appId:     process.env.META_APP_ID_2,
+    appSecret: process.env.META_APP_SECRET_2,
+  },
+].filter(c => c.appId && c.appSecret);
+
+// Códigos Meta que indicam throttle a nível de aplicativo
+const APP_RATE_LIMIT_CODES = new Set([4, 32, 613]);
+
+function isAppRateLimitError(errorCode) {
+  return APP_RATE_LIMIT_CODES.has(Number(errorCode));
+}
+
+// Troca um token existente pelo equivalente via outro app Meta.
+// Usa fb_exchange_token para obter um novo long-lived token emitido pelo App2.
+// Se o token for IGAA (Instagram Login), usa a API do Graph IG.
+async function exchangeTokenViaApp(currentToken, appConfig) {
+  try {
+    const { appId, appSecret } = appConfig;
+    if (isIGToken(currentToken)) {
+      // Instagram Login token → renova via Graph IG
+      const url = `${GRAPH_IG}/access_token?grant_type=ig_exchange_token&client_secret=${appSecret}&access_token=${currentToken}`;
+      const res  = await fetch(url);
+      const data = await res.json();
+      if (data.access_token) return data.access_token;
+      console.warn(`[publish] Troca IG token via ${appConfig.label} falhou:`, data.error?.message);
+      return null;
+    } else {
+      // Facebook/Page token → renova via Graph FB
+      const url = `${GRAPH_FB}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${currentToken}`;
+      const res  = await fetch(url);
+      const data = await res.json();
+      if (data.access_token) return data.access_token;
+      console.warn(`[publish] Troca FB token via ${appConfig.label} falhou:`, data.error?.message);
+      return null;
+    }
+  } catch (err) {
+    console.warn(`[publish] Erro ao trocar token via ${appConfig.label}:`, err.message);
+    return null;
+  }
+}
+
 // ─── Conversão de URL do Google Drive ────────────────────────────────────────
 function resolveGoogleDriveUrl(url) {
   if (!url || !url.includes("drive.google.com")) return url;
@@ -129,13 +189,9 @@ async function recordPost(store, id, state, success) {
   await saveState(store, id, state);
 }
 
-// ─── Publicacao por conta ─────────────────────────────────────────────────────
-async function publishOne({ account, media_url, media_type, post_type, caption }) {
-  const token = account.access_token;
-  if (!token) return { success: false, error: "Token nao encontrado. Reconecte a conta." };
-
+// ─── Publicacao por conta (token pode ser sobrescrito pelo fallback) ──────────
+async function publishOneWithToken({ account, token, media_url, media_type, post_type, caption }) {
   const resolved_url = resolveGoogleDriveUrl(media_url);
-
   const isVideo = media_type === "VIDEO";
   let payload = { access_token: token };
 
@@ -152,39 +208,97 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
       : { ...payload, image_url: resolved_url, media_type: "STORIES" };
   }
 
-  try {
-    const cRes  = await fetch(`${graph(token)}/${account.id}/media`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const cData = await cRes.json();
-    if (cData.error) {
-      let errMsg = cData.error.message;
-      if (cData.error.code === 2207077 || errMsg?.includes("Media upload has failed")) {
-        errMsg = "Instagram não conseguiu baixar o vídeo do Google Drive. Confirme que: 1) O arquivo tem permissão 'Qualquer pessoa com o link pode ver'; 2) O link é compartilhável (não restrito). O sistema já aplica 'confirm=t' automaticamente para contornar a tela de antivírus do Drive.";
-      }
-      return { success: false, error: errMsg, errorCode: cData.error.code };
+  const cRes  = await fetch(`${graph(token)}/${account.id}/media`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const cData = await cRes.json();
+  if (cData.error) {
+    let errMsg = cData.error.message;
+    if (cData.error.code === 2207077 || errMsg?.includes("Media upload has failed")) {
+      errMsg = "Instagram não conseguiu baixar o vídeo do Google Drive. Confirme que: 1) O arquivo tem permissão 'Qualquer pessoa com o link pode ver'; 2) O link é compartilhável (não restrito). O sistema já aplica 'confirm=t' automaticamente para contornar a tela de antivírus do Drive.";
     }
-
-    // Vídeos: retorna pending imediatamente — publish-finish cuida do resto
-    if (isVideo || post_type === "REEL") {
-      return { success: false, pending: true, creation_id: cData.id };
-    }
-
-    // Imagens: publica diretamente
-    const pRes  = await fetch(`${graph(token)}/${account.id}/media_publish`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ creation_id: cData.id, access_token: token }),
-    });
-    const pData = await pRes.json();
-    if (pData.error) return { success: false, error: pData.error.message, errorCode: pData.error.code };
-
-    return { success: true, media_id: pData.id, published_at: new Date().toISOString() };
-  } catch (err) {
-    return { success: false, error: err.message };
+    return { success: false, error: errMsg, errorCode: cData.error.code };
   }
+
+  // Vídeos: retorna pending imediatamente — publish-finish cuida do resto
+  if (isVideo || post_type === "REEL") {
+    return { success: false, pending: true, creation_id: cData.id };
+  }
+
+  // Imagens: publica diretamente
+  const pRes  = await fetch(`${graph(token)}/${account.id}/media_publish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ creation_id: cData.id, access_token: token }),
+  });
+  const pData = await pRes.json();
+  if (pData.error) return { success: false, error: pData.error.message, errorCode: pData.error.code };
+
+  return { success: true, media_id: pData.id, published_at: new Date().toISOString() };
+}
+
+// ─── Publicacao com fallback automático entre Apps ────────────────────────────
+// Tenta publicar com o App1 (token original). Se receber erro de rate limit
+// a nível de aplicativo (código 4, 32 ou 613), renova o token via App2 e
+// tenta novamente. Retorna qual app foi usado no campo `app_used`.
+async function publishOne({ account, media_url, media_type, post_type, caption }) {
+  const originalToken = account.access_token;
+  if (!originalToken) return { success: false, error: "Token nao encontrado. Reconecte a conta." };
+
+  // Lista de tentativas: começa com token original, depois tenta apps alternativos
+  const attempts = [{ token: originalToken, appLabel: META_APP_CONFIGS[0]?.label || "App1" }];
+
+  // Pré-carrega tokens alternativos (App2, App3…) se configurados
+  // Só tenta o fallback se houver pelo menos 2 apps configurados
+  if (META_APP_CONFIGS.length >= 2) {
+    for (let i = 1; i < META_APP_CONFIGS.length; i++) {
+      attempts.push({ token: null, appConfig: META_APP_CONFIGS[i], appLabel: META_APP_CONFIGS[i].label });
+    }
+  }
+
+  let lastResult = null;
+
+  for (let i = 0; i < attempts.length; i++) {
+    let { token, appConfig, appLabel } = attempts[i];
+
+    // Para tentativas de fallback, obtém o token via exchange com o app alternativo
+    if (token === null && appConfig) {
+      console.log(`[publish] 🔄 @${account.username}: tentando fallback via ${appLabel} (rate limit do app anterior)`);
+      token = await exchangeTokenViaApp(originalToken, appConfig);
+      if (!token) {
+        console.warn(`[publish] @${account.username}: não foi possível obter token via ${appLabel}, pulando`);
+        continue;
+      }
+    }
+
+    try {
+      const result = await publishOneWithToken({ account, token, media_url, media_type, post_type, caption });
+      lastResult = result;
+
+      // Sucesso ou erro não relacionado ao rate limit do app → retorna imediatamente
+      if (result.success || result.pending) {
+        if (i > 0) console.log(`[publish] ✅ @${account.username}: publicado via ${appLabel} (fallback)`);
+        return { ...result, app_used: appLabel };
+      }
+
+      // Erro de rate limit a nível de app → tenta próximo app
+      if (isAppRateLimitError(result.errorCode) && i < attempts.length - 1) {
+        console.warn(`[publish] ⚠️ @${account.username}: rate limit do ${appLabel} (código ${result.errorCode}) — tentando ${attempts[i + 1]?.appLabel}`);
+        continue;
+      }
+
+      // Outro erro → retorna sem tentar fallback
+      return { ...result, app_used: appLabel };
+
+    } catch (err) {
+      lastResult = { success: false, error: err.message };
+      if (i < attempts.length - 1) continue;
+    }
+  }
+
+  return { ...(lastResult || { success: false, error: "Falha em todas as tentativas" }), app_used: "none" };
 }
 
 // ─── Processa uma conta (rate-limit + publish) ────────────────────────────────
@@ -267,7 +381,8 @@ export const handler = async (event) => {
       post_type, captions, default_caption, skip_rate_limit,
     });
     results.push(result);
-    console.log(`[publish] @${batch[i].username}: ${result.success ? "✅ ok" : result.rate_limited ? "⏳ rate limited" : `❌ ${result.error}`}`);
+    const appTag = result.app_used ? ` [${result.app_used}]` : "";
+    console.log(`[publish] @${batch[i].username}${appTag}: ${result.success ? "✅ ok" : result.rate_limited ? "⏳ rate limited" : `❌ ${result.error}`}`);
   }
 
   return {
