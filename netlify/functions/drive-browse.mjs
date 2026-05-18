@@ -25,8 +25,15 @@ const VIDEO_MIMES = [
   "video/x-matroska", "video/webm", "video/3gpp",
 ];
 
+const CSV_MIMES = [
+  "text/csv", "text/plain", "application/csv",
+  "application/vnd.ms-excel",
+];
+
+const ALL_MIMES = [...VIDEO_MIMES, ...CSV_MIMES];
+
 async function listFolder(token, folderId) {
-  const q = `'${folderId}' in parents and trashed = false and (mimeType = 'application/vnd.google-apps.folder' or ${VIDEO_MIMES.map((m) => `mimeType = '${m}'`).join(" or ")})`;
+  const q = `'${folderId}' in parents and trashed = false and (mimeType = 'application/vnd.google-apps.folder' or ${ALL_MIMES.map((m) => `mimeType = '${m}'`).join(" or ")})`;
 
   const params = new URLSearchParams({
     q,
@@ -49,10 +56,20 @@ async function listFolder(token, folderId) {
   const data    = await res.json();
   const folders = [];
   const videos  = [];
+  const csvs    = [];
 
   for (const f of data.files || []) {
     if (f.mimeType === "application/vnd.google-apps.folder") {
       folders.push({ id: f.id, name: f.name, type: "folder" });
+    } else if (CSV_MIMES.includes(f.mimeType) || f.name.toLowerCase().endsWith(".csv")) {
+      csvs.push({
+        id:         f.id,
+        name:       f.name,
+        type:       "csv",
+        mimeType:   f.mimeType,
+        size:       parseInt(f.size || "0"),
+        modifiedAt: f.modifiedTime,
+      });
     } else {
       const dur = f.videoMediaMetadata?.durationMillis
         ? Math.round(f.videoMediaMetadata.durationMillis / 1000)
@@ -71,7 +88,7 @@ async function listFolder(token, folderId) {
     }
   }
 
-  return { folders, videos };
+  return { folders, videos, csvs };
 }
 
 async function getFolderName(token, folderId) {
@@ -153,8 +170,8 @@ export default async function handler(req) {
 
   try {
     const folderName = await getFolderName(token, folderId);
-    const { folders, videos } = await listFolder(token, folderId);
-    return json({ folderId, folderName, folders, videos, total: folders.length + videos.length });
+    const { folders, videos, csvs } = await listFolder(token, folderId);
+    return json({ folderId, folderName, folders, videos, csvs, total: folders.length + videos.length + csvs.length });
   } catch (err) {
     if (err.tokenExpired) {
       return json({ error: "token_expired", message: "Sessão do Drive expirada. Reconecte." }, 401);
