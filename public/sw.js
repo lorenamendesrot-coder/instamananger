@@ -34,11 +34,20 @@ async function tick() {
     );
     for (const item of due) await runItem(item);
 
-    // 2. Itens video_finish (vídeos aguardando processamento do Instagram)
+    // 2. Itens video_finish — agrupados por historyId para 1 chamada HTTP por lote
+    // Em vez de N chamadas separadas (1 por conta), faz 1 chamada por lote de contas
     const dueFin = queue.filter(
       (x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now
     );
-    for (const item of dueFin) await runVideoFinish(item);
+    const vfGroups = {};
+    for (const item of dueFin) {
+      const key = item.historyId || item.id;
+      if (!vfGroups[key]) vfGroups[key] = [];
+      vfGroups[key].push(item);
+    }
+    for (const group of Object.values(vfGroups)) {
+      await runVideoFinishGroup(group);
+    }
   } finally {
     _tickRunning = false;
   }
@@ -178,137 +187,133 @@ async function runItem(item) {
   notifyClients({ type: "QUEUE_UPDATE" });
 }
 
-// ─── runVideoFinish — finaliza vídeos pendentes ───────────────────────────────
-async function runVideoFinish(item) {
-  await updateItem(item.id, { status: "running" });
+// ─── runVideoFinishGroup — processa um lote de contas numa única chamada HTTP ──
+// Antes: 10 contas = 10 chamadas ao publish-finish = 10 × 3 checks na Graph API
+// Agora: 10 contas = 1 chamada ao publish-finish  = 1 × 3 checks (em paralelo no server)
+async function runVideoFinishGroup(items) {
+  if (!items || items.length === 0) return;
 
-  const origin = self.location.origin;
+  // Marca todos como running
+  for (const item of items) {
+    await updateItem(item.id, { status: "running" });
+  }
+
+  const origin   = self.location.origin;
+  const accounts = items[0].accounts || [];
 
   try {
     const res = await fetch(`${origin}/.netlify/functions/publish-finish`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        pending:  [{ account_id: item.account_id, creation_id: item.creation_id, username: item.username }],
-        accounts: item.accounts,
+        pending:  items.map((x) => ({
+          account_id:  x.account_id,
+          creation_id: x.creation_id,
+          username:    x.username,
+        })),
+        accounts,
       }),
     });
 
     if (!res.ok) throw new Error(`publish-finish HTTP ${res.status}`);
-    const data   = await res.json();
-    const result = (data.results || [])[0];
+    const data    = await res.json();
+    const results = data.results || [];
 
-    if (result?.success) {
-      // ── Sucesso: atualiza o item do histórico (não cria um novo) ──────────
-      const histEntry = await getHistoryItem(item.historyId);
-      if (histEntry) {
-        // Remove erros anteriores desta conta (retry bem-sucedido) e adiciona o sucesso
-        const prevResults     = (histEntry.results || []).filter((r) => r.account_id !== item.account_id);
-        const updatedResults  = [...prevResults, result];
-        const updatedPending  = (histEntry.pending_accounts || []).filter(
-          (a) => a.account_id !== item.account_id
-        );
-        await saveItem("history", {
-          ...histEntry,
-          results:          updatedResults,
-          pending_accounts: updatedPending,
-        });
-      }
+    // Mapa account_id → resultado
+    const resultMap = {};
+    for (const r of results) resultMap[r.account_id] = r;
 
-      // Remove da fila de video_finish (evita acúmulo que causa ERR_HTTP2_PROTOCOL_ERROR)
-      await deleteItemFromBlob(item.id);
-      await updateItem(item.id, { status: "done", result, finishedAt: new Date().toISOString() });
-      console.log(`[SW] video_finish ✅ @${item.username} media_id:${result.media_id}`);
+    for (const item of items) {
+      const result = resultMap[item.account_id];
 
-      // Verifica se todos os video_finish do mesmo grupo terminaram
-      await maybeCloseParentItem(item.historyId, item.id, "done");
-
-      notifyClients({ type: "QUEUE_UPDATE" });
-
-      try {
-        if (Notification.permission === "granted") {
-          self.registration.showNotification("Insta Manager", {
-            body: `✅ Reel publicado — @${item.username}`,
-            icon: "/favicon.ico",
-            tag:  `vf-${item.id}`,
-          });
-        }
-      } catch (_) {}
-
-    } else if (result && !result.success) {
-      // -- Erro do Instagram --
-      const errMsg  = result.error || "Erro desconhecido";
-      const errCode = result.errorCode;
-
-      // Rate limit Meta (codes 4, 32, 613) -> reagenda com backoff de 5 min
-      const isRateLimit = [4, 32, 613].includes(errCode);
-      const attempts    = (item.attempts || 0) + 1;
-
-      if (isRateLimit && attempts < item.maxAttempts) {
-        const retryDelay = 5 * 60 * 1000;
-        console.warn("[SW] video_finish rate limit code " + errCode + " @" + item.username + " retry em 5min (" + attempts + "/" + item.maxAttempts + ")");
-        await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + retryDelay, lastError: errMsg });
-        notifyClients({ type: "QUEUE_UPDATE" });
-        return;
-      }
-
-      console.warn("[SW] video_finish ERRO @" + item.username + ": " + errMsg + " (code " + (errCode || "?") + ")");
-
-      // Atualiza historico: move pending_accounts para results com erro
-      const histEntry = await getHistoryItem(item.historyId);
-      if (histEntry) {
-        const updatedResults = [...(histEntry.results || []), {
-          account_id: item.account_id,
-          username:   item.username,
-          success:    false,
-          error:      errMsg,
-          errorCode:  errCode,
-        }];
-        const updatedPending = (histEntry.pending_accounts || []).filter(
-          (a) => a.account_id !== item.account_id
-        );
-        await saveItem("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
-      }
-
-      await deleteItemFromBlob(item.id);
-      await updateItem(item.id, { status: "error", error: errMsg });
-      await maybeCloseParentItem(item.historyId, item.id, "error");
-      notifyClients({ type: "QUEUE_UPDATE" });
-
-    } else {
-      // ── Ainda não está pronto — reagenda ─────────────────────────────────
-      const attempts = (item.attempts || 0) + 1;
-      if (attempts >= item.maxAttempts) {
-        const errMsg = `Timeout: vídeo não processou após ${attempts} tentativas`;
+      if (result?.success) {
+        // ── Sucesso ──────────────────────────────────────────────────────────
         const histEntry = await getHistoryItem(item.historyId);
         if (histEntry) {
-          const updatedResults = [...(histEntry.results || []), {
-            account_id: item.account_id, username: item.username, success: false, error: errMsg,
-          }];
-          const updatedPending = (histEntry.pending_accounts || []).filter(
-            (a) => a.account_id !== item.account_id
-          );
+          const prevResults    = (histEntry.results || []).filter((r) => r.account_id !== item.account_id);
+          const updatedResults = [...prevResults, result];
+          const updatedPending = (histEntry.pending_accounts || []).filter((a) => a.account_id !== item.account_id);
+          await saveItem("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
+        }
+        await deleteItemFromBlob(item.id);
+        await updateItem(item.id, { status: "done", result, finishedAt: new Date().toISOString() });
+        console.log(`[SW] video_finish ✅ @${item.username} media_id:${result.media_id}`);
+        await maybeCloseParentItem(item.historyId, item.id, "done");
+
+        try {
+          if (Notification.permission === "granted") {
+            self.registration.showNotification("Insta Manager", {
+              body: `✅ Reel publicado — @${item.username}`,
+              icon: "/favicon.ico",
+              tag:  `vf-${item.id}`,
+            });
+          }
+        } catch (_) {}
+
+      } else if (result && !result.success) {
+        // ── Erro do Instagram ────────────────────────────────────────────────
+        const errMsg  = result.error || "Erro desconhecido";
+        const errCode = result.errorCode;
+        const isRateLimit = [4, 32, 613].includes(errCode);
+        const attempts    = (item.attempts || 0) + 1;
+
+        if (isRateLimit && attempts < item.maxAttempts) {
+          // Backoff exponencial: 5min, 10min, 20min...
+          const retryDelay = Math.min(5 * 60 * 1000 * Math.pow(2, attempts - 1), 30 * 60 * 1000);
+          console.warn(`[SW] video_finish rate limit @${item.username} retry em ${Math.round(retryDelay/60000)}min (${attempts}/${item.maxAttempts})`);
+          await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + retryDelay, lastError: errMsg });
+          continue;
+        }
+
+        console.warn(`[SW] video_finish ERRO @${item.username}: ${errMsg} (code ${errCode || "?"})`);
+        const histEntry = await getHistoryItem(item.historyId);
+        if (histEntry) {
+          const updatedResults = [...(histEntry.results || []), { account_id: item.account_id, username: item.username, success: false, error: errMsg, errorCode: errCode }];
+          const updatedPending = (histEntry.pending_accounts || []).filter((a) => a.account_id !== item.account_id);
           await saveItem("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
         }
         await deleteItemFromBlob(item.id);
         await updateItem(item.id, { status: "error", error: errMsg });
         await maybeCloseParentItem(item.historyId, item.id, "error");
-        notifyClients({ type: "QUEUE_UPDATE" });
+
       } else {
-        // Ainda há tentativas — reagenda para 30s depois
-        await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 30000 });
+        // ── Ainda IN_PROGRESS — reagenda com backoff exponencial ─────────────
+        const attempts = (item.attempts || 0) + 1;
+        if (attempts >= item.maxAttempts) {
+          const errMsg = `Timeout: vídeo não processou após ${attempts} tentativas`;
+          const histEntry = await getHistoryItem(item.historyId);
+          if (histEntry) {
+            const updatedResults = [...(histEntry.results || []), { account_id: item.account_id, username: item.username, success: false, error: errMsg }];
+            const updatedPending = (histEntry.pending_accounts || []).filter((a) => a.account_id !== item.account_id);
+            await saveItem("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
+          }
+          await deleteItemFromBlob(item.id);
+          await updateItem(item.id, { status: "error", error: errMsg });
+          await maybeCloseParentItem(item.historyId, item.id, "error");
+        } else {
+          // Backoff exponencial: 60s, 90s, 2min, 3min, 5min, 8min, 13min
+          const delays = [60, 90, 120, 180, 300, 480, 780];
+          const delay  = (delays[attempts - 1] || 120) * 1000;
+          console.log(`[SW] video_finish IN_PROGRESS @${item.username} — retry em ${delay/1000}s (${attempts}/${item.maxAttempts})`);
+          await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + delay });
+        }
       }
     }
 
   } catch (err) {
-    const attempts = (item.attempts || 0) + 1;
-    if (attempts >= item.maxAttempts) {
-      await updateItem(item.id, { status: "error", error: err.message });
-      notifyClients({ type: "QUEUE_UPDATE" });
-    } else {
-      await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 20000 });
+    // Erro de rede — reagenda todos com backoff
+    for (const item of items) {
+      const attempts = (item.attempts || 0) + 1;
+      const delay    = attempts >= item.maxAttempts ? null : Math.min(60000 * attempts, 300000);
+      if (delay === null) {
+        await updateItem(item.id, { status: "error", error: err.message });
+      } else {
+        await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + delay });
+      }
     }
   }
+
+  notifyClients({ type: "QUEUE_UPDATE" });
 }
 
 // ─── Fecha item pai quando todos os video_finish do grupo terminaram ──────────
