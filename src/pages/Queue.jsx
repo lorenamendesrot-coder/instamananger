@@ -222,9 +222,13 @@ export default function Queue() {
   };
   const saveEdit = async () => {
     if (!editModal) return;
-    // new Date("YYYY-MM-DDTHH:mm") interpreta a string como horário local (spec ECMAScript),
-    // então .getTime() já retorna o timestamp UTC correto — sem manipular offset manualmente.
-    await updateItem({...editModal, scheduledAt: new Date(editTime).getTime(), caption: editCaption, status:"pending"});
+    // Parseia manualmente os campos do datetime-local para evitar ambiguidade de timezone
+    // entre browsers (Safari trata strings sem timezone como UTC; Chrome/Firefox como local).
+    const [datePart, timePart] = editTime.split("T");
+    const [year, month, day]   = datePart.split("-").map(Number);
+    const [hour, minute]       = timePart.split(":").map(Number);
+    const scheduledAt = new Date(year, month - 1, day, hour, minute).getTime();
+    await updateItem({...editModal, scheduledAt, caption: editCaption, status:"pending"});
     setEditModal(null);
   };
 
@@ -389,7 +393,7 @@ export default function Queue() {
                 {[
                   {label:"Total",     value:mainQueue.length,                               color:"var(--text)"   },
                   {label:"Pendentes", value:mainQueue.filter(q=>q.status==="pending").length,color:"var(--info)"   },
-                  {label:"Publicados",value:mainQueue.filter(q=>q.status==="done").length,   color:"var(--success)"},
+                  {label:"Publicados",value:mainQueue.filter(q=>q.status==="done"||q.status==="posted").length,   color:"var(--success)"},
                   {label:"Rodando",   value:mainQueue.filter(q=>q.status==="running").length, color:"var(--warning)"},
                   {label:"Erros",     value:mainQueue.filter(q=>q.status==="error").length,  color:"var(--danger)" },
                 ].map(({label,value,color}) => (
@@ -402,7 +406,7 @@ export default function Queue() {
 
               {buildDayGroups(mainQueue).map(g => {
                 const dayItems=mainQueue.filter(q=>q.scheduledAt>=g.startMs&&q.scheduledAt<=g.endMs);
-                const dayDone=dayItems.filter(q=>q.status==="done").length;
+                const dayDone=dayItems.filter(q=>q.status==="done"||q.status==="posted").length;
                 const dayErr=dayItems.filter(q=>q.status==="error").length;
                 return (
                   <div key={g.startMs} className="card" style={{marginBottom:12}}>
@@ -648,8 +652,6 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   // Contas — colapsa se muitas
   const accs          = item.accounts || [];
   const qty           = accs.length;
-  const visibleAccs   = accs.slice(0, 6);
-  const hiddenAccs    = accs.length - 6;
   const scheduledDate = new Date(item.scheduledAt);
 
   // Badge de status label
@@ -803,7 +805,7 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
               {pendingSubItems.map((sub, i) => {
                 const s = statusStyle(sub.status);
                 return (
-                  <div key={"sub-" + i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 7, background: s.bg, border: `1px solid ${s.border}` }}>
+                  <div key={"sub-" + (sub.username || i)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 7, background: s.bg, border: `1px solid ${s.border}` }}>
                     <AccAvatar acc={{ username: sub.username }} size={20} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>@{sub.username}</span>
@@ -828,7 +830,7 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
                 const isRetrying = !r.success && r.retrying;
                 const rs = r.success ? statusStyle("done") : isRetrying ? statusStyle("running") : statusStyle("error");
                 return (
-                  <div key={"res-" + i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 7, background: rs.bg, border: `1px solid ${rs.border}` }}>
+                  <div key={"res-" + (r.username || i)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 7, background: rs.bg, border: `1px solid ${rs.border}` }}>
                     <AccAvatar acc={{ username: r.username }} size={20} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>@{r.username}</span>
