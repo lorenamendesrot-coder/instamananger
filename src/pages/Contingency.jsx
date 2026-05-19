@@ -823,6 +823,20 @@ export default function Contingency() {
     finally { setImporting(false); }
   };
 
+  // Normaliza status antigos ("preparada") para o equivalente atual
+  const normalizeStatus = (s) => s === "preparada" ? "em_edicao" : s;
+
+  const filtered = accounts.filter((a) => {
+    const q = search.toLowerCase();
+    const status = normalizeStatus(a.status);
+    return (!q || (a.username||"").toLowerCase().includes(q) || (a.nome||"").toLowerCase().includes(q))
+      && (filterStatus === "todas" || status === filterStatus);
+  });
+
+  const counts = STATUS_OPTIONS.reduce((acc, s) => {
+    acc[s.value] = accounts.filter((a) => normalizeStatus(a.status) === s.value).length; return acc;
+  }, {});
+
   const handleExport = () => {
     const csv  = exportCSV(filtered);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -859,20 +873,6 @@ export default function Contingency() {
   const handleMoveToMain = useCallback(() => {
     showToast("error", "⚠️ Função futura. Por enquanto copie as credenciais e conecte manualmente.");
   }, [showToast]);
-
-  const filtered = accounts.filter((a) => {
-    const q = search.toLowerCase();
-    const status = normalizeStatus(a.status);
-    return (!q || (a.username||"").toLowerCase().includes(q) || (a.nome||"").toLowerCase().includes(q))
-      && (filterStatus === "todas" || status === filterStatus);
-  });
-
-  // Normaliza status antigos ("preparada") para o equivalente atual
-  const normalizeStatus = (s) => s === "preparada" ? "em_edicao" : s;
-
-  const counts = STATUS_OPTIONS.reduce((acc, s) => {
-    acc[s.value] = accounts.filter((a) => normalizeStatus(a.status) === s.value).length; return acc;
-  }, {});
 
   // ── Seleção em lote ──────────────────────────────────────────────────────────
   const toggleSelectMode = useCallback(() => {
