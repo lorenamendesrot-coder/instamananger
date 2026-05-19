@@ -55,7 +55,7 @@ async function tick() {
 
 // ─── runItem — agendamento normal ────────────────────────────────────────────
 async function runItem(item) {
-  await updateItem(item.id, { status: "running" });
+  await updateItem(item.id, { status: "running", startedAt: new Date().toISOString() });
   notifyClients({ type: "QUEUE_UPDATE" });
 
   try {
@@ -195,7 +195,7 @@ async function runVideoFinishGroup(items) {
 
   // Marca todos como running
   for (const item of items) {
-    await updateItem(item.id, { status: "running" });
+    await updateItem(item.id, { status: "running", startedAt: new Date().toISOString() });
   }
 
   const origin   = self.location.origin;
@@ -351,18 +351,13 @@ async function maybeCloseParentItem(historyId, currentVfId, currentVfStatus) {
       error:        s.error,
     }));
 
-    // Busca o pai pelo parentQueueId no IDB
-    const parentQueueId = siblings.find((s) => s.parentQueueId)?.parentQueueId;
-    let parent = parentQueueId ? queue.find((x) => x.id === parentQueueId) : null;
-
-    // Fallback: busca por conta em comum no IDB (sem chamar /api/queue extra)
-    if (!parent) {
-      const siblingAccountIds = new Set(siblingsUpdated.map(s => s.account_id));
-      parent = queue.find((x) =>
-        !x.type &&
-        x.accounts?.some?.((a) => siblingAccountIds.has(a.id))
-      );
-    }
+    // Busca o pai pelo parentQueueId (campo preferencial) ou parentId (fallback seguro).
+    // O fallback antigo por "conta em comum" foi removido — com múltiplos posts
+    // agendados para as mesmas contas, encontrava o item errado e fechava o pai
+    // incorreto (Bug #4).
+    const parentQueueId = siblings.find((s) => s.parentQueueId)?.parentQueueId
+                       || siblings.find((s) => s.parentId)?.parentId;
+    const parent = parentQueueId ? queue.find((x) => x.id === parentQueueId) : null;
 
     console.log(`[SW] grupo ${historyId} concluído — ${ok}/${total} publicados | pai: ${parent?.id || "NÃO ENCONTRADO"}`);
 
