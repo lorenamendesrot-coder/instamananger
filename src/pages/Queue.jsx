@@ -142,13 +142,14 @@ export default function Queue() {
     finally { setForcingId(null); setForceConfirm(null); }
   }, [updateItem, reloadQueue]);
 
-  const hasPendingChildren = videoFinish.some(v=>v.status==="pending"||v.status==="running") || perAccount.some(p=>p.status==="pending"||p.status==="running");
+  const hasActiveItems = videoFinish.some(v=>v.status==="pending"||v.status==="running") || perAccount.some(p=>p.status==="pending"||p.status==="running") || mainQueue.some(q=>q.status==="running");
+  const hasPendingChildren = hasActiveItems;
   const pollRef   = useRef(null);
   const lastFetch = useRef(0);
   // Polling reduzido para 30s — o SW já notifica via sw:queue-update quando algo muda
   // 8s causava acúmulo de requests junto com os PUTs do SW (request limit)
   useEffect(() => {
-    if (hasPendingChildren) pollRef.current = setInterval(reloadQueue, 30000);
+    if (hasPendingChildren) pollRef.current = setInterval(reloadQueue, 10000);
     else clearInterval(pollRef.current);
     return () => clearInterval(pollRef.current);
   }, [hasPendingChildren, reloadQueue]);
