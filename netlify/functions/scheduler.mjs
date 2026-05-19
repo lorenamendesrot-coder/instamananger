@@ -166,6 +166,16 @@ async function processVideoFinish(store, vf) {
     if (result?.success) {
       console.log(`[scheduler] ✅ video_finish @${vf.username} publicado`);
       await queueUpdate(store, { ...vf, status: "done", result, finishedAt: new Date().toISOString() });
+      // Limpa awaitingVideoFinish do per_account pai para que pendingChildren o exclua corretamente
+      // e o grupo pai possa fechar via pushResultToParent
+      await withLock(store, (queue) => {
+        const pa = queue.find(
+          (x) => x.type === "per_account" && x.historyId === vf.historyId &&
+                 x.account_id === vf.account_id && x.awaitingVideoFinish
+        );
+        if (!pa) return queue;
+        return queue.map((x) => x.id === pa.id ? { ...x, awaitingVideoFinish: false } : x);
+      });
       await pushResultToParent(store, vf.historyId, {
         _subItemId:   vf.id,
         account_id:   vf.account_id,
@@ -180,6 +190,15 @@ async function processVideoFinish(store, vf) {
     if (result && !result.success && !result.not_ready) {
       console.error(`[scheduler] ❌ video_finish @${vf.username}: ${result.error}`);
       await queueUpdate(store, { ...vf, status: "error", error: result.error });
+      // Limpa awaitingVideoFinish do per_account pai também no caminho de erro
+      await withLock(store, (queue) => {
+        const pa = queue.find(
+          (x) => x.type === "per_account" && x.historyId === vf.historyId &&
+                 x.account_id === vf.account_id && x.awaitingVideoFinish
+        );
+        if (!pa) return queue;
+        return queue.map((x) => x.id === pa.id ? { ...x, awaitingVideoFinish: false } : x);
+      });
       await pushResultToParent(store, vf.historyId, {
         _subItemId: vf.id,
         account_id: vf.account_id,
@@ -195,6 +214,14 @@ async function processVideoFinish(store, vf) {
     const attempts = (vf.attempts || 0) + 1;
     if (attempts >= (vf.maxAttempts ?? VIDEO_FINISH_MAX_ATTEMPTS)) {
       await queueUpdate(store, { ...vf, status: "error", error: "Timeout: vídeo não processou após múltiplas tentativas" });
+      await withLock(store, (queue) => {
+        const pa = queue.find(
+          (x) => x.type === "per_account" && x.historyId === vf.historyId &&
+                 x.account_id === vf.account_id && x.awaitingVideoFinish
+        );
+        if (!pa) return queue;
+        return queue.map((x) => x.id === pa.id ? { ...x, awaitingVideoFinish: false } : x);
+      });
       await pushResultToParent(store, vf.historyId, {
         _subItemId: vf.id,
         account_id: vf.account_id,
@@ -210,6 +237,14 @@ async function processVideoFinish(store, vf) {
     const attempts = (vf.attempts || 0) + 1;
     if (attempts >= (vf.maxAttempts ?? VIDEO_FINISH_MAX_ATTEMPTS)) {
       await queueUpdate(store, { ...vf, status: "error", error: err.message });
+      await withLock(store, (queue) => {
+        const pa = queue.find(
+          (x) => x.type === "per_account" && x.historyId === vf.historyId &&
+                 x.account_id === vf.account_id && x.awaitingVideoFinish
+        );
+        if (!pa) return queue;
+        return queue.map((x) => x.id === pa.id ? { ...x, awaitingVideoFinish: false } : x);
+      });
       await pushResultToParent(store, vf.historyId, {
         _subItemId: vf.id,
         account_id: vf.account_id,
