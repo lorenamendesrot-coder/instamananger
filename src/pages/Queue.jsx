@@ -219,7 +219,7 @@ export default function Queue() {
     window.addEventListener("sw:queue-update", h);
     return () => window.removeEventListener("sw:queue-update", h);
   }, [reloadQueue]);
-  useEffect(() => { reloadQueue?.(); }, []);
+  useEffect(() => { reloadQueue?.(); }, [reloadQueue]);
 
   const openEdit = (item) => {
     setEditModal(item);
@@ -629,7 +629,7 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
       ? "running"   // resultados parciais ainda chegando (sub-itens ainda ativos)
       : item.status;
   // isPast: horário passou, ainda pending, nunca rodou — badge laranja
-  const isOverdue = item.status === "pending" && item.scheduledAt < Date.now() && !item.runCount && (item.results || []).length === 0;
+  const isOverdue = item.status === "pending" && item.scheduledAt < Date.now() && !item.loop && !item.runCount && (item.results || []).length === 0;
 
   // Resultados
   const results  = item.results || [];
@@ -797,8 +797,14 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
 
       {/* ── Expandido: lista de contas ── */}
       {expanded && canExpand && (() => {
-        const resultUsernames = new Set(results.map(r => r.username));
-        const pendingSubItems = subItems.filter(s => !resultUsernames.has(s.username));
+        const resultAccountIds = new Set(results.map(r => r.account_id).filter(Boolean));
+        // Fallback para username quando account_id não está presente (itens legados)
+        const resultUsernames  = new Set(results.map(r => r.username).filter(Boolean));
+        const pendingSubItems  = subItems.filter(s =>
+          s.account_id
+            ? !resultAccountIds.has(s.account_id)
+            : !resultUsernames.has(s.username)
+        );
 
         return (
           <div style={{ borderTop: "1px solid var(--border)", background: "var(--bg3)" }}>
