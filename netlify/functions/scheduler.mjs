@@ -114,18 +114,6 @@ async function queueSave(store, newItem) {
   });
 }
 
-// ─── Inserção em lote atômica (1 write para N sub-itens) ─────────────────────
-async function queueSaveMany(store, newItems) {
-  await withLock(store, (queue) => {
-    for (const item of newItems) {
-      const idx = queue.findIndex((x) => x.id === item.id);
-      if (idx >= 0) queue[idx] = item;
-      else queue.push(item);
-    }
-    return queue;
-  });
-}
-
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
 // Intervalo entre sub-itens per_account (substitui o delay interno do publish).
@@ -237,9 +225,13 @@ async function pushResultToParent(store, historyId, result) {
       const parent = queue.find((x) => x.historyId === historyId && (x.type === "group" || !x.type));
       if (!parent) return queue;
 
-      const existing   = (parent.results || []).filter((r) => r._subItemId !== result._subItemId || !result._subItemId
-        ? r.account_id !== result.account_id  // fallback legado: sem _subItemId, deduplica por account_id
-        : r._subItemId !== result._subItemId  // preferencial: deduplica pelo id único do sub-item
+      // Remove resultado anterior do mesmo sub-item para evitar duplicatas.
+      // Se o resultado tem _subItemId, deduplica pelo id único do sub-item (preferencial).
+      // Senão, cai no fallback legado e deduplica por account_id.
+      const existing = (parent.results || []).filter((r) =>
+        result._subItemId
+          ? r._subItemId !== result._subItemId   // preferencial: id único do sub-item
+          : r.account_id !== result.account_id   // fallback legado: account_id
       );
       const newResults = [...existing, result];
 
@@ -269,7 +261,9 @@ async function pushResultToParent(store, historyId, result) {
       if (allDone && parent.loop) {
         const HOUR_MS = 3600 * 1000;
         const JITTER  = Math.floor(Math.random() * 360 - 180) * 1000;
-        loopNext = { scheduledAt: parent.scheduledAt + HOUR_MS + JITTER };
+        // Usa Date.now() como base — não parent.scheduledAt — para evitar que atrasos
+        // (retries, scheduler travado) façam o próximo ciclo cair no passado e disparar imediatamente.
+        loopNext = { scheduledAt: Date.now() + HOUR_MS + JITTER };
       }
       const updated = {
         ...parent,
@@ -690,7 +684,7 @@ export default async function handler(request) {
 
   await runConcurrent(
     dueNormal,
-    (item) => processItem(store, { ...item, startedAt: new Date().toISOString() }),
+    (item) => processItem(store, item),
     5,
   );
   await runConcurrent(
