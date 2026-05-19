@@ -35,18 +35,20 @@ function groupEntries(entries, groupBy) {
   const map = new Map();
   for (const e of entries) {
     let key;
-    if (groupBy === "day")    key = new Date(e.created_at || 0).toDateString();
-    if (groupBy === "type")   key = e.post_type || "OUTRO";
-    if (groupBy === "source") key = e.source || (e.from_scheduler ? "schedule" : "new_post");
+    if      (groupBy === "day")    key = new Date(e.created_at || 0).toDateString();
+    else if (groupBy === "type")   key = e.post_type || "OUTRO";
+    else if (groupBy === "source") key = e.source || (e.from_scheduler ? "schedule" : "new_post");
+    else                           key = "outro"; // fallback — nunca deixa key === undefined
+
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(e);
   }
 
   return Array.from(map.entries()).map(([key, items]) => {
     let label = key;
-    if (groupBy === "day")    label = dayKey(items[0].created_at);
-    if (groupBy === "type")   label = `${TYPE_ICON[key] || "📌"} ${TYPE_LABEL[key] || key}`;
-    if (groupBy === "source") label = SOURCE_BADGE[key]?.label || key;
+    if      (groupBy === "day")    label = dayKey(items[0].created_at);
+    else if (groupBy === "type")   label = `${TYPE_ICON[key] || "📌"} ${TYPE_LABEL[key] || key}`;
+    else if (groupBy === "source") label = SOURCE_BADGE[key]?.label || key;
     return { key, label, items };
   });
 }
@@ -169,20 +171,19 @@ function HistoryCard({ entry, isExpanded, onToggle }) {
         <span style={{ fontSize: 11, color: "var(--muted)", flexShrink: 0 }}>{isExpanded ? "▲" : "▼"}</span>
       </div>
 
-      {/* ── Legenda (só se expandido) ── */}
-      {isExpanded && entry.default_caption && (
-        <div style={{ fontSize: 11, color: "var(--text2)", marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
-          {entry.default_caption}
-        </div>
-      )}
-
-      {/* ── Detalhes expandidos ── */}
+      {/* ── Detalhes expandidos (caption incluída aqui, sem duplicar) ── */}
       {isExpanded && (
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
           <div style={{ fontSize: 11, color: "var(--text2)", display: "flex", flexDirection: "column", gap: 4 }}>
             <div>📎 <a href={entry.media_url} target="_blank" rel="noreferrer" style={{ color: "var(--accent3)", textDecoration: "underline", fontSize: 11 }} onClick={(e) => e.stopPropagation()}>{entry.media_url}</a></div>
             <div>📁 {entry.media_type} · {entry.post_type}</div>
             {entry.delay_seconds > 0 && <div>⏱ Delay: {entry.delay_seconds}s</div>}
+            {entry.default_caption && (
+              <div style={{ marginTop: 2 }}>
+                <span style={{ fontWeight: 600, color: "var(--muted)" }}>📝 Caption: </span>
+                <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{entry.default_caption}</span>
+              </div>
+            )}
           </div>
           {(entry.results || []).some((r) => r.error) && (
             <div style={{ marginTop: 8 }}>
