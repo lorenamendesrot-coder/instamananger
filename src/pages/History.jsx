@@ -26,7 +26,10 @@ const GROUP_OPTIONS = [
 ];
 
 function dayKey(dateStr) {
-  return new Date(dateStr).toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+  if (!dateStr) return "Data desconhecida";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "Data desconhecida";
+  return d.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 }
 
 function groupEntries(entries, groupBy) {
@@ -46,7 +49,7 @@ function groupEntries(entries, groupBy) {
 
   return Array.from(map.entries()).map(([key, items]) => {
     let label = key;
-    if      (groupBy === "day")    label = dayKey(items[0].created_at);
+    if      (groupBy === "day")    label = dayKey(items.find(x => x.created_at)?.created_at || null);
     else if (groupBy === "type")   label = `${TYPE_ICON[key] || "📌"} ${TYPE_LABEL[key] || key}`;
     else if (groupBy === "source") label = SOURCE_BADGE[key]?.label || key;
     return { key, label, items };
@@ -65,9 +68,9 @@ function sortEntries(entries, sortBy) {
   if (sortBy === "date_asc")     return copy.sort((a, b) => toTs(a) - toTs(b));
   if (sortBy === "type")         return copy.sort((a, b) => (a.post_type || "").localeCompare(b.post_type || ""));
   if (sortBy === "success_desc") return copy.sort((a, b) => {
-    const sa = (b.results || []).filter(r => r.success).length;
-    const sb = (a.results || []).filter(r => r.success).length;
-    return sa - sb;
+    const sa = (a.results || []).filter(r => r.success).length;
+    const sb = (b.results || []).filter(r => r.success).length;
+    return sb - sa; // descendente: mais publicados primeiro
   });
   if (sortBy === "fail_first") return copy.sort((a, b) => {
     const fa = (a.results || []).some(r => !r.success) ? 0 : 1;
@@ -229,19 +232,23 @@ export default function History() {
   }, []);
 
   // ── Auto-reload ──────────────────────────────────────────────────────────
+  // Ref estável para reloadHistory — evita recriar o intervalo toda vez que a função muda de referência
+  const reloadRef = useRef(reloadHistory);
+  useEffect(() => { reloadRef.current = reloadHistory; }, [reloadHistory]);
+
   useEffect(() => {
-    const h = () => reloadHistory();
+    const h = () => reloadRef.current?.();
     window.addEventListener("sw:queue-update", h);
     return () => window.removeEventListener("sw:queue-update", h);
-  }, [reloadHistory]);
+  }, []);
 
   const hasPending = history.some((e) => (e.pending_accounts || []).length > 0);
   const pollRef    = useRef(null);
   useEffect(() => {
-    if (hasPending) { pollRef.current = setInterval(reloadHistory, 15000); }
+    if (hasPending) { pollRef.current = setInterval(() => reloadRef.current?.(), 15000); }
     else            { clearInterval(pollRef.current); }
     return () => clearInterval(pollRef.current);
-  }, [hasPending, reloadHistory]);
+  }, [hasPending]);
 
   // ── Filtro → sort → group ────────────────────────────────────────────────
   const filtered = useMemo(() => {
