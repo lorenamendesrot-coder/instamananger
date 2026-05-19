@@ -3,6 +3,10 @@ import { getStore } from "@netlify/blobs";
 
 const SITE_URL = process.env.URL || process.env.NETLIFY_URL || "";
 
+// Máximo de tentativas para verificar se o vídeo foi processado pela Meta.
+// 4 checks × ~90s por check ≈ ~6min. Deve bater com o valor do App.jsx (VIDEO_FINISH_MAX_ATTEMPTS).
+const VIDEO_FINISH_MAX_ATTEMPTS = 4;
+
 function getQueueStore() {
   return getStore({
     name:        "insta-queue",
@@ -190,7 +194,7 @@ async function processVideoFinish(store, vf) {
     }
 
     const attempts = (vf.attempts || 0) + 1;
-    if (attempts >= (vf.maxAttempts || 20)) {
+    if (attempts >= (vf.maxAttempts ?? VIDEO_FINISH_MAX_ATTEMPTS)) {
       await queueUpdate(store, { ...vf, status: "error", error: "Timeout: vídeo não processou após múltiplas tentativas" });
       await pushResultToParent(store, vf.historyId, {
         account_id: vf.account_id,
@@ -204,7 +208,7 @@ async function processVideoFinish(store, vf) {
     }
   } catch (err) {
     const attempts = (vf.attempts || 0) + 1;
-    if (attempts >= (vf.maxAttempts || 20)) {
+    if (attempts >= (vf.maxAttempts ?? VIDEO_FINISH_MAX_ATTEMPTS)) {
       await queueUpdate(store, { ...vf, status: "error", error: err.message });
       await pushResultToParent(store, vf.historyId, {
         account_id: vf.account_id,
