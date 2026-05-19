@@ -199,9 +199,30 @@ export default async function handler(req) {
       const id  = url.searchParams.get("id");
 
       if (id) {
-        const updated = await withLock(store, (queue) =>
-          queue.filter((x) => String(x.id) !== String(id))
-        );
+        const updated = await withLock(store, (queue) => {
+          const target = queue.find((x) => String(x.id) === String(id));
+
+          if (!target) return queue; // item não existe — noop
+
+          // Bloquear deleção de sub-itens com status running
+          if (
+            (target.type === "per_account" || target.type === "video_finish") &&
+            target.status === "running"
+          ) {
+            throw new Error("Não é possível deletar um sub-item em execução (status: running)");
+          }
+
+          // Se for um group, cancelar em cascata todos os sub-itens com o mesmo historyId
+          if (target.type === "group") {
+            const historyId = target.historyId;
+            return queue.filter(
+              (x) => String(x.id) !== String(id) && x.historyId !== historyId
+            );
+          }
+
+          // Item simples ou sub-item não-running
+          return queue.filter((x) => String(x.id) !== String(id));
+        });
         return json({ deleted: id, remaining: updated.length }, 200, req);
       } else {
         await withLock(store, () => []);
