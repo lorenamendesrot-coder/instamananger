@@ -23,7 +23,7 @@ function sortItems(items, sortBy) {
   if (sortBy === "type")      return copy.sort((a, b) => (a.postType || "").localeCompare(b.postType || ""));
   if (sortBy === "account")   return copy.sort((a, b) => ((a.accounts||[])[0]?.username||"").localeCompare((b.accounts||[])[0]?.username||""));
   if (sortBy === "status") {
-    const ORDER = { running: 0, error: 1, pending: 2, done: 3 };
+    const ORDER = { running: 0, error: 1, pending: 2, done: 3, posted: 3 };
     return copy.sort((a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9));
   }
   return copy;
@@ -172,9 +172,15 @@ export default function Queue() {
       return;
     }
     setForcingId(item.id);
-    try { await updateItem({...item, scheduledAt: Date.now()-1000, status:"pending"}); reloadQueue?.(); }
-    catch (err) { setForceError(err?.message || "Erro ao forçar publicação."); }
-    finally { setForcingId(null); setForceConfirm(null); }
+    try {
+      await updateItem({...item, scheduledAt: Date.now()-1000, status:"pending"});
+      reloadQueue?.();
+      setForceConfirm(null); // fecha o modal só em caso de sucesso
+    } catch (err) {
+      setForceError(err?.message || "Erro ao forçar publicação."); // modal permanece aberto para o usuário ver o erro
+    } finally {
+      setForcingId(null);
+    }
   }, [updateItem, reloadQueue, queue]);
 
   const hasActiveItems = videoFinish.some(v=>v.status==="pending"||v.status==="running") || perAccount.some(p=>p.status==="pending"||p.status==="running") || mainQueue.some(q=>q.status==="running");
@@ -428,7 +434,7 @@ export default function Queue() {
                         return (
                           <div key={item.id} title={`@${acc0?.username} · ${item.postType} · ${new Date(item.scheduledAt).toLocaleString("pt-BR")}`}
                             style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:si.bg,color:si.color,border:`1px solid ${si.color}30`,display:"flex",alignItems:"center",gap:4}}>
-                            {item.status==="done"?"✅":item.status==="error"?"❌":item.status==="running"?"⟳":"⏳"}
+                            {item.status==="done"||item.status==="posted"?"✅":item.status==="error"?"❌":item.status==="running"?"⟳":"⏳"}
                             @{acc0?.username||"?"}
                             <span style={{opacity:0.6}}>{new Date(item.scheduledAt).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}</span>
                           </div>
@@ -584,7 +590,7 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
 
   const isGroup     = item.type === "group";
   const paTotal     = paItems?.length || 0;
-  const paDone      = paItems?.filter(p => p.status === "done" || p.status === "error").length || 0;
+  const paDone      = paItems?.filter(p => p.status === "done" || p.status === "posted" || p.status === "error").length || 0;
   const paRunning   = paItems?.filter(p => p.status === "running").length || 0;
   const hasActivePa = paItems?.some(p => p.status === "pending" || p.status === "running");
   // allPaDone: só considera concluído se existem sub-itens E todos finalizaram
@@ -638,7 +644,7 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
     : statusStyle(effectiveStatus, isPartial || isAllFail);
 
   // Progresso de publicação em curso
-  const vfDone  = (vfItems  || []).filter(v => v.status === "done").length;
+  const vfDone  = (vfItems  || []).filter(v => v.status === "done" || v.status === "posted").length;
   const vfTotal = (vfItems  || []).length;
 
   // Sub-items para exibir (vf ou pa, o que for mais relevante)
@@ -773,7 +779,7 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
         {/* Linha 2: avatares das contas */}
         <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
           {accs.map((a, i) => (
-            <div key={a.id || i} style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 20, padding: "2px 8px 2px 4px" }}>
+            <div key={a.id || a.username || i} style={{ display: "flex", alignItems: "center", gap: 4, background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 20, padding: "2px 8px 2px 4px" }}>
               <AccAvatar acc={a} size={18} />
               <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text2)", whiteSpace: "nowrap" }}>@{a.username || "—"}</span>
             </div>
