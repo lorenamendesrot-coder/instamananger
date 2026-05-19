@@ -24,6 +24,9 @@ function getJobStore() {
 }
 
 async function renewAccessToken(refreshToken) {
+  if (!CLIENT_ID || !CLIENT_SECRET) {
+    throw new Error("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET não configurados no Netlify");
+  }
   const res  = await fetch("https://oauth2.googleapis.com/token", {
     method:  "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },

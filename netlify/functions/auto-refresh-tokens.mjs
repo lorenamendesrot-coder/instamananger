@@ -6,7 +6,10 @@
 import { getStore } from "@netlify/blobs";
 
 const GRAPH      = "https://graph.facebook.com/v21.0";
+const GRAPH_IG   = "https://graph.instagram.com";
 const STORE_NAME = "insta-accounts";
+
+function isIGToken(token) { return token?.startsWith("IGAA"); }
 
 function getAccountsStore() {
   return getStore({
@@ -20,6 +23,15 @@ function getAccountsStore() {
 async function debugToken(token) {
   const APP_ID     = process.env.META_APP_ID;
   const APP_SECRET = process.env.META_APP_SECRET;
+  // Tokens do Instagram Login (IGAA) são validados pelo graph.instagram.com —
+  // o endpoint debug_token do FB Graph não reconhece esses tokens e retorna is_valid=false
+  // mesmo com o token ainda válido.
+  if (isIGToken(token)) {
+    const res  = await fetch(`${GRAPH_IG}/me?fields=id&access_token=${token}`);
+    const data = await res.json();
+    if (data.error) return { is_valid: false, error_code: data.error.code, error_message: data.error.message };
+    return { is_valid: true, type: "INSTAGRAM", expires_at: 0, scopes: [] };
+  }
   const res  = await fetch(
     `${GRAPH}/debug_token?input_token=${token}&access_token=${APP_ID}|${APP_SECRET}`
   );
@@ -30,6 +42,14 @@ async function debugToken(token) {
 async function refreshToken(token) {
   const APP_ID     = process.env.META_APP_ID;
   const APP_SECRET = process.env.META_APP_SECRET;
+  // Tokens do Instagram Login renovam via graph.instagram.com/refresh_access_token —
+  // o fb_exchange_token do FB Graph não funciona com tokens IGAA.
+  if (isIGToken(token)) {
+    const res  = await fetch(
+      `${GRAPH_IG}/refresh_access_token?grant_type=ig_refresh_token&access_token=${token}`
+    );
+    return res.json();
+  }
   const res  = await fetch(
     `${GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${APP_ID}&client_secret=${APP_SECRET}&fb_exchange_token=${token}`
   );
@@ -88,8 +108,11 @@ export default async function handler() {
         continue;
       }
 
-      // Tokens que nunca expiram (expires_at === 0) não precisam de renovação
-      if (daysLeft === null) {
+      // Tokens que nunca expiram (expires_at === 0, tipo Page Token do FB) não precisam de renovação.
+      // EXCEÇÃO: tokens do Instagram Login (IGAA) também retornam expires_at=0 porque o IG Graph não
+      // expõe o campo — mas eles expiram em 60 dias. Por isso sempre renovamos tokens IGAA mesmo com
+      // daysLeft === null, em vez de pular o refresh.
+      if (daysLeft === null && !isIGToken(acc.access_token)) {
         await store.setJSON(key, { ...acc, token_status: "valid", updated_at: new Date().toISOString() });
         results.push({ username: acc.username, status: "never_expires" });
         alreadyOk++;
