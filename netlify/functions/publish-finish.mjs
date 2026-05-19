@@ -62,17 +62,19 @@ async function checkContainer(creationId, token) {
   }
 }
 
-// Tenta publicar com até 3 tentativas para o caso de "Media ID not available"
+// Tenta publicar com até 2 tentativas para o caso de "Media ID not available".
+// Budget total após checkContainer (até 20s): ~5s restantes antes do timeout de 26s.
+// 2 tentativas × 2s + 1 sleep × 1s = 5s total — dentro da margem segura.
 async function tryPublish(accountId, creationId, token, username) {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await sleep(2000); // 2s é suficiente para "Media ID not available" — 4s arriscava estourar o timeout
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await sleep(1000);
     try {
       const pRes  = await fetch(`${graph(token)}/${accountId}/media_publish`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ creation_id: creationId, access_token: token }),
-        // 6s por tentativa: 3 tentativas × 6s + 2 sleeps × 2s = 22s total — dentro dos 26s da Netlify
-        signal:  AbortSignal.timeout(6000),
+        // 2s por tentativa: 2 × 2s + 1 sleep × 1s = 5s — cabe após os 20s do checkContainer
+        signal:  AbortSignal.timeout(2000),
       });
       const pData = await pRes.json();
 
@@ -93,19 +95,20 @@ async function tryPublish(accountId, creationId, token, username) {
 
     } catch (err) {
       console.warn(`[publish-finish] exceção ao publicar @${username} tentativa ${attempt + 1}:`, err.message);
-      if (attempt < 2) continue;
+      if (attempt < 1) continue;
       return { account_id: accountId, username, success: false, error: err.message };
     }
   }
-  return { account_id: accountId, username, success: false, error: "Media ID not available após 3 tentativas" };
+  return { account_id: accountId, username, success: false, error: "Media ID not available após 2 tentativas" };
 }
 
 export const handler = async (event) => {
   const reqOrigin  = event.headers?.origin || "";
-  // Se ALLOWED_ORIGIN está configurado, só permite a origem exata — qualquer outra recebe
-  // seu próprio valor de volta, fazendo o browser rejeitar a resposta por CORS.
-  // Se não está configurado (dev/local), permite tudo com "*".
-  const corsOrigin = ALLOWED_ORIGIN ? (reqOrigin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : reqOrigin) : "*";
+  // Se ALLOWED_ORIGIN está configurado, só espelha a origem se ela bater exatamente.
+  // Origens não autorizadas recebem ALLOWED_ORIGIN no header — o browser rejeita
+  // porque o valor não bate com a origem da requisição, bloqueando o acesso.
+  // Se ALLOWED_ORIGIN não está configurado (dev/local), permite tudo com "*".
+  const corsOrigin = ALLOWED_ORIGIN ? ALLOWED_ORIGIN : "*";
   const headers    = {
     "Access-Control-Allow-Origin":  corsOrigin,
     "Access-Control-Allow-Headers": "Content-Type",
