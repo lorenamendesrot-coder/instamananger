@@ -43,6 +43,7 @@ async function renewAccessToken(refreshToken) {
   const res  = await fetch("https://oauth2.googleapis.com/token", {
     method:  "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    signal:  AbortSignal.timeout(8_000),
     body:    new URLSearchParams({
       grant_type:    "refresh_token",
       refresh_token: refreshToken,
@@ -63,6 +64,7 @@ async function downloadFromDrive(fileId, accessToken) {
 
   const res = await fetch(apiUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal:  AbortSignal.timeout(20_000),
   });
 
   if (!res.ok) {
@@ -237,14 +239,48 @@ export default async function handler(req) {
       const store  = getVideoStore();
       const buffer = await store.get(key, { type: "arrayBuffer" });
       if (!buffer) return new Response("Video nao encontrado", { status: 404 });
+
+      const total      = buffer.byteLength;
+      const rangeHeader = req.headers.get?.("range");
+
+      if (rangeHeader) {
+        const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/);
+        if (!match) {
+          return new Response("Range invalido", {
+            status: 416,
+            headers: { "Content-Range": `bytes */${total}` },
+          });
+        }
+        const start = match[1] !== "" ? parseInt(match[1]) : total - parseInt(match[2]);
+        const end   = match[2] !== "" ? Math.min(parseInt(match[2]), total - 1) : total - 1;
+        if (start > end || start < 0 || end >= total) {
+          return new Response("Range fora dos limites", {
+            status: 416,
+            headers: { "Content-Range": `bytes */${total}` },
+          });
+        }
+        const chunk = buffer.slice(start, end + 1);
+        return new Response(chunk, {
+          status: 206,
+          headers: {
+            "Content-Type":                "video/mp4",
+            "Content-Length":              String(chunk.byteLength),
+            "Content-Range":               `bytes ${start}-${end}/${total}`,
+            "Accept-Ranges":               "bytes",
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control":               "public, max-age=86400",
+          },
+        });
+      }
+
       return new Response(buffer, {
         status: 200,
         headers: {
           "Content-Type":                "video/mp4",
-          "Content-Length":              String(buffer.byteLength),
+          "Content-Length":              String(total),
+          "Accept-Ranges":               "bytes",
           "Access-Control-Allow-Origin": "*",
           "Cache-Control":               "public, max-age=86400",
-          "Accept-Ranges":               "bytes",
         },
       });
     } catch (err) {
