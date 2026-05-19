@@ -525,10 +525,28 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   const paDone      = paItems?.filter(p => p.status === "done" || p.status === "error").length || 0;
   const paRunning   = paItems?.filter(p => p.status === "running").length || 0;
   const hasActivePa = paItems?.some(p => p.status === "pending" || p.status === "running");
+  // allPaDone: só considera concluído se existem sub-itens E todos finalizaram
+  // Se paTotal===0 mas o pai ainda está "running", sub-itens ainda não foram criados → não está pronto
   const allPaDone   = paTotal > 0 && paDone >= paTotal;
 
-  const isPublishing    = (item.status === "done" || item.status === "running") && (hasActiveVf || hasActivePa) && !allPaDone;
-  const effectiveStatus = isPublishing ? "running" : item.status;
+  // isPublishing: pai marcado como done/running MAS ainda há sub-itens ativos OU
+  // pai está "running" sem nenhum sub-item ainda (sub-itens sendo criados agora)
+  const isPublishing = (
+    (item.status === "running") ||
+    ((item.status === "done" || item.status === "posted") && (hasActiveVf || hasActivePa))
+  ) && !allPaDone;
+
+  // effectiveStatus: só avança para o status real do pai quando TODOS os sub-itens concluíram
+  // Conta quantas contas já têm resultado registrado
+  const totalAccounts  = (item.accounts || []).length;
+  const totalResults   = (item.results  || []).length;
+  const allResultsIn   = totalAccounts > 0 && totalResults >= totalAccounts;
+
+  const effectiveStatus = isPublishing
+    ? "running"
+    : (item.status === "posted" || item.status === "done") && !allResultsIn && totalAccounts > 1
+      ? "running"   // resultados parciais ainda chegando — mantém "publicando"
+      : item.status;
   // isPast: horário passou, ainda pending, nunca rodou — badge laranja
   const isOverdue = item.status === "pending" && item.scheduledAt < Date.now() && !item.runCount && (item.results || []).length === 0;
 
