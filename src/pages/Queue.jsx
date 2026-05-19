@@ -156,10 +156,12 @@ export default function Queue() {
     finally { setSelected(new Set()); setSelecting(false); setConfirmModal(null); }
   };
 
-  const [forceError, setForceError] = useState(null);
+  // forceError acoplado ao forceConfirm — evita race condition entre fechamento e reabertura do modal
   const openForceConfirm = useCallback((item) => {
-    setForceError(null);
-    setForceConfirm(item);
+    setForceConfirm({ ...item, _error: null });
+  }, []);
+  const setForceError = useCallback((msg) => {
+    setForceConfirm(prev => prev ? { ...prev, _error: msg } : prev);
   }, []);
 
   const forcePublish = useCallback(async (item) => {
@@ -167,7 +169,6 @@ export default function Queue() {
     // Verifica se o item ainda existe na fila antes de tentar publicar
     const stillExists = queue.some(q => q.id === item.id);
     if (!stillExists) {
-      setForceConfirm(null);
       setForceError("Este agendamento foi removido e não pode mais ser publicado.");
       return;
     }
@@ -470,20 +471,20 @@ export default function Queue() {
       )}
 
       {forceConfirm && (
-        <div onClick={()=>{setForceConfirm(null);setForceError(null);}} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.65)",backdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div onClick={()=>setForceConfirm(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.65)",backdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg2)",border:"1px solid var(--border2)",borderRadius:16,padding:28,width:"100%",maxWidth:420,boxShadow:"0 24px 80px rgba(0,0,0,0.5)"}}>
             <div style={{fontWeight:700,fontSize:16,marginBottom:10}}>⚡ Publicar agora?</div>
             <div style={{fontSize:13,color:"var(--muted)",marginBottom:18,lineHeight:1.6}}>
               O agendamento será publicado <strong style={{color:"var(--text)"}}>imediatamente</strong>, ignorando o horário programado.
               {forceConfirm.accounts?.length>0 && <div style={{marginTop:10,display:"flex",gap:6,flexWrap:"wrap"}}>{forceConfirm.accounts.map(a=><span key={a.id} style={{fontSize:11,background:"var(--bg3)",border:"1px solid var(--border)",borderRadius:20,padding:"2px 8px"}}>@{a.username}</span>)}</div>}
             </div>
-            {forceError && (
+            {forceConfirm?._error && (
               <div style={{fontSize:12,color:"var(--danger)",background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:8,padding:"8px 12px",marginBottom:14}}>
-                ❌ {forceError}
+                ❌ {forceConfirm._error}
               </div>
             )}
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <button className="btn btn-ghost btn-sm" onClick={()=>{setForceConfirm(null);setForceError(null);}}>Cancelar</button>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setForceConfirm(null)}>Cancelar</button>
               <button className="btn btn-primary btn-sm" style={{background:"var(--warning)",borderColor:"var(--warning)"}} onClick={()=>forcePublish(forceConfirm)} disabled={forcingId===forceConfirm?.id}>
                 {forcingId===forceConfirm?.id?"Publicando…":"⚡ Publicar agora"}
               </button>
@@ -590,10 +591,12 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
 
   const isGroup     = item.type === "group";
   const paTotal     = paItems?.length || 0;
-  const paDone      = paItems?.filter(p => p.status === "done" || p.status === "posted" || p.status === "error").length || 0;
+  // Considera terminal qualquer status que não seja pending/running — inclui done, posted, error, cancelled ou qualquer status futuro
+  const PA_ACTIVE   = new Set(["pending", "running"]);
+  const paDone      = paItems?.filter(p => !PA_ACTIVE.has(p.status)).length || 0;
   const paRunning   = paItems?.filter(p => p.status === "running").length || 0;
-  const hasActivePa = paItems?.some(p => p.status === "pending" || p.status === "running");
-  // allPaDone: só considera concluído se existem sub-itens E todos finalizaram
+  const hasActivePa = paItems?.some(p => PA_ACTIVE.has(p.status));
+  // allPaDone: só considera concluído se existem sub-itens E todos saíram de pending/running
   // Se paTotal===0 mas o pai ainda está "running", sub-itens ainda não foram criados → não está pronto
   const allPaDone   = paTotal > 0 && paDone >= paTotal;
 
