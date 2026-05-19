@@ -78,11 +78,13 @@ function tsToDate(ts) {
 }
 
 export default async function handler(req) {
-  const origin = req.headers.get("origin") || "";
+  const origin     = req.headers.get("origin") || "";
+  const corsOrigin = ALLOWED_ORIGIN ? (origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : origin) : "*";
   const corsHeaders = {
-    "Access-Control-Allow-Origin": ALLOWED_ORIGIN || origin || "*",
+    "Access-Control-Allow-Origin":  corsOrigin,
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
+    ...(corsOrigin !== "*" ? { "Vary": "Origin" } : {}),
   };
 
   if (req.method === "OPTIONS") {

@@ -142,8 +142,7 @@ async function checkAccount(acc) {
 
 export const handler = async (event) => {
   const requestOrigin = event.headers?.origin || "";
-  const corsOrigin    = ALLOWED_ORIGIN && requestOrigin === ALLOWED_ORIGIN
-    ? ALLOWED_ORIGIN : ALLOWED_ORIGIN || "*";
+  const corsOrigin    = ALLOWED_ORIGIN ? (requestOrigin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : requestOrigin) : "*";
 
   const headers = {
     "Access-Control-Allow-Origin": corsOrigin,

@@ -20,7 +20,7 @@ const CLIENT_ID       = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET   = process.env.GOOGLE_CLIENT_SECRET;
 
 function corsHeaders(origin) {
-  const allowed = ALLOWED_ORIGIN && origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : ALLOWED_ORIGIN || "*";
+  const allowed = ALLOWED_ORIGIN ? (origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : origin) : "*";
   return {
     "Access-Control-Allow-Origin":  allowed,
     "Access-Control-Allow-Headers": "Content-Type",

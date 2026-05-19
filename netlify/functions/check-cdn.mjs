@@ -5,11 +5,18 @@
 // POST /api/check-cdn { urls: ["https://files.catbox.moe/...", ...] }
 // GET  /api/check-cdn?url=https://... (verifica uma URL específica)
 
-const CORS = {
-  "Access-Control-Allow-Origin":  process.env.ALLOWED_ORIGIN || "*",
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Content-Type":                 "application/json",
-};
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
+
+function buildCors(req) {
+  const origin     = (req?.headers?.get ? req.headers.get("origin") : req?.headers?.origin) || "";
+  const corsOrigin = ALLOWED_ORIGIN ? (origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : origin) : "*";
+  return {
+    "Access-Control-Allow-Origin":  corsOrigin,
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Content-Type":                 "application/json",
+    ...(corsOrigin !== "*" ? { "Vary": "Origin" } : {}),
+  };
+}
 
 const TIMEOUT_MS = 8_000;
 
@@ -61,6 +68,7 @@ function detectCdn(url) {
 }
 
 export default async function handler(req) {
+  const CORS = buildCors(req);
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
 
   function json(data, status = 200) {

@@ -10,12 +10,13 @@ function graphBase(token) { return isIGToken(token) ? GRAPH_IG + "/" : GRAPH_FB 
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
 function corsHeaders(req) {
-  const origin = (req?.headers?.get ? req.headers.get("origin") : req?.headers?.origin) || "";
-  const allow  = ALLOWED_ORIGIN && origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : (ALLOWED_ORIGIN ? "" : "*");
+  const origin     = (req?.headers?.get ? req.headers.get("origin") : req?.headers?.origin) || "";
+  const corsOrigin = ALLOWED_ORIGIN ? (origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : origin) : "*";
   return {
-    "Access-Control-Allow-Origin":  allow,
+    "Access-Control-Allow-Origin":  corsOrigin,
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type":                 "application/json",
+    ...(corsOrigin !== "*" ? { "Vary": "Origin" } : {}),
   };
 }
 

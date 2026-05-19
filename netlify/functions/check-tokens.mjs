@@ -8,12 +8,18 @@ const GRAPH_IG   = "https://graph.instagram.com";
 
 function isIGToken(token) { return token?.startsWith('IGAA'); }
 const STORE_NAME = "insta-accounts";
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
-const HEADERS = {
-  "Content-Type": "application/json",
-  "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN || "*",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+function makeHeaders(event) {
+  const origin     = event?.headers?.origin || "";
+  const corsOrigin = ALLOWED_ORIGIN ? (origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : origin) : "*";
+  return {
+    "Content-Type":                 "application/json",
+    "Access-Control-Allow-Origin":  corsOrigin,
+    "Access-Control-Allow-Headers": "Content-Type",
+    ...(corsOrigin !== "*" ? { "Vary": "Origin" } : {}),
+  };
+}
 
 function getAccountsStore() {
   return getStore({
@@ -70,6 +76,7 @@ async function tryRefresh(token) {
 }
 
 export const handler = async (event) => {
+  const HEADERS = makeHeaders(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: HEADERS };
   if (event.httpMethod !== "GET")     return { statusCode: 405, headers: HEADERS, body: JSON.stringify({ error: "Método não permitido" }) };
 
