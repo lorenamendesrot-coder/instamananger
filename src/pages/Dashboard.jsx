@@ -108,9 +108,10 @@ function RecentPostRow({ item }) {
     if (diff < 0) {
       // futuro → agendado
       const dfuture = d - now;
-      if (dfuture < 3600000) return `em ${Math.round(dfuture / 60000)}min`;
-      if (dfuture < 86400000) return `hoje, ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
-      return `amanhã, ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+      if (dfuture < 3600000)   return `em ${Math.round(dfuture / 60000)}min`;
+      if (dfuture < 86400000)  return `hoje, ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+      if (dfuture < 172800000) return `amanhã, ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+      return `em ${Math.round(dfuture / 86400000)} dias`;
     }
     if (diff < 3600000)  return `${Math.round(diff / 60000)}min atrás`;
     if (diff < 86400000) return `hoje, ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
@@ -178,7 +179,7 @@ export default function Dashboard() {
   const expiredTokens  = accounts.filter((a) => a.token_status === "expired").length;
 
   // ── Fila ─────────────────────────────────────────────────────────────────
-  const pendingCount = queue.filter((x) => !x.type && x.status === "pending").length;
+  const pendingCount = queue.filter((x) => (!x.type || x.type === "group") && x.status === "pending").length;
 
   // ── Publicações recentes (fila + histórico misturados, últimas 6) ─────────
   const recentItems = useMemo(() => {
@@ -195,14 +196,14 @@ export default function Dashboard() {
     // Fila — todos os itens principais (sem sub-itens type!=null)
     // Inclui done/posted para refletir o status real em vez de mostrar "Agendado" para posts já publicados
     const queueItems = queue
-      .filter((x) => !x.type)
+      .filter((x) => !x.type || x.type === "group")
       .map((q) => ({
         id:              q.id,
         post_type:       q.postType,
         default_caption: q.caption || "",
         status:          q.status,          // status real: pending | running | done | posted | error
         scheduledAt:     q.scheduledAt,
-        created_at:      q.finishedAt || null,
+        created_at:      q.finishedAt || (q.status === "error" ? q.scheduledAt : null),
       }));
 
     // Agrupa: pendentes/rodando primeiro (ordenados por scheduledAt asc),
@@ -217,10 +218,13 @@ export default function Dashboard() {
     ].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
     // Remove duplicatas (item que aparece tanto na fila quanto no histórico): mantém o da fila (status mais atualizado)
+    // Itens sem id (undefined) recebem uma chave única por índice para não se anularem mutuamente
     const seen = new Set();
-    const deduped = [...pending, ...finished].filter((x) => {
-      if (seen.has(x.id)) return false;
-      seen.add(x.id);
+    const allItems = [...pending, ...finished];
+    const deduped = allItems.filter((x, i) => {
+      const key = x.id != null ? x.id : `__noid_${i}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
 
@@ -228,7 +232,7 @@ export default function Dashboard() {
   }, [history, queue]);
 
   // ── Gráfico: posts publicados por dia nos últimos 7 dias ──────────────────
-  const days7 = last7Days();
+  const days7 = useMemo(() => last7Days(), []);
   const chartCounts = useMemo(() => {
     return days7.map(({ date }) =>
       (history || []).filter((h) => {
