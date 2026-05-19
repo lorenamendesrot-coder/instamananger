@@ -390,8 +390,13 @@ async function processPerAccount(store, item) {
     if (result.pending && result.creation_id) {
       // Vídeo ainda processando → cria video_finish
       console.log(`[scheduler] 🎬 @${item.username} vídeo em processamento — criando video_finish`);
+      // ID inclui mediaIndex para evitar colisão quando o mesmo item tem múltiplas mídias
+      // (mediaUrls[0] e mediaUrls[1] da mesma conta gerariam o mesmo ID sem esse campo)
+      const vfId = item.mediaIndex != null
+        ? `vf-${item.historyId}-m${item.mediaIndex}-${item.account_id}`
+        : `vf-${item.historyId}-${item.account_id}`; // fallback para itens legados sem mediaIndex
       await queueSave(store, {
-        id:          `vf-${item.historyId}-${item.account_id}`,
+        id:          vfId,
         type:        "video_finish",
         status:      "pending",
         creation_id: result.creation_id,
