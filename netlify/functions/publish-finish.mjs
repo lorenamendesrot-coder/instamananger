@@ -98,7 +98,10 @@ async function tryPublish(accountId, creationId, token, username) {
 
 export const handler = async (event) => {
   const reqOrigin  = event.headers?.origin || "";
-  const corsOrigin = ALLOWED_ORIGIN && reqOrigin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : ALLOWED_ORIGIN || "*";
+  // Se ALLOWED_ORIGIN está configurado, só permite a origem exata — qualquer outra recebe
+  // seu próprio valor de volta, fazendo o browser rejeitar a resposta por CORS.
+  // Se não está configurado (dev/local), permite tudo com "*".
+  const corsOrigin = ALLOWED_ORIGIN ? (reqOrigin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : reqOrigin) : "*";
   const headers    = {
     "Access-Control-Allow-Origin":  corsOrigin,
     "Access-Control-Allow-Headers": "Content-Type",

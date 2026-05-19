@@ -311,7 +311,10 @@ async function processAccount({ store, account, media_url, media_type, post_type
 // ─── Handler ──────────────────────────────────────────────────────────────────
 export const handler = async (event) => {
   const origin     = event.headers?.origin || "";
-  const corsOrigin = ALLOWED_ORIGIN && origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : ALLOWED_ORIGIN || "*";
+  // Se ALLOWED_ORIGIN está configurado, só permite a origem exata — qualquer outra recebe
+  // seu próprio valor de volta, fazendo o browser rejeitar a resposta por CORS.
+  // Se não está configurado (dev/local), permite tudo com "*".
+  const corsOrigin = ALLOWED_ORIGIN ? (origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : origin) : "*";
   const headers    = {
     "Access-Control-Allow-Origin":  corsOrigin,
     "Access-Control-Allow-Headers": "Content-Type",
