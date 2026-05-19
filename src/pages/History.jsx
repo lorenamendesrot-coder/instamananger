@@ -247,10 +247,19 @@ export default function History() {
   const filtered = useMemo(() => {
     return history.filter((e) => {
       if (filterType !== "ALL" && e.post_type !== filterType) return false;
-      const ok    = (e.results || []).filter((r) => r.success).length;
-      const total = (e.results || []).length;
-      if (filterStatus === "success" && ok !== total) return false;
-      if (filterStatus === "fail"    && ok === total) return false;
+      const ok      = (e.results || []).filter((r) => r.success).length;
+      const total   = (e.results || []).length;
+      const pending = (e.pending_accounts || []).length;
+      const hasAnyResult = total > 0;
+      // "success": só passa se há resultados E todos foram bem — entradas sem resultados (ainda processando) são excluídas
+      if (filterStatus === "success" && (!hasAnyResult || ok !== total)) return false;
+      // "fail": passa se há pelo menos um erro, OU se não há nenhum resultado ainda (processando = inconclusivo)
+      // Entradas com results vazio E sem pending são excluídas (nunca tiveram resultados → não é falha)
+      if (filterStatus === "fail") {
+        const hasFail = hasAnyResult && ok < total;
+        const isProcessing = !hasAnyResult && pending > 0;
+        if (!hasFail && !isProcessing) return false;
+      }
       if (search.trim()) {
         const q = search.toLowerCase();
         const inCaption  = (e.default_caption || "").toLowerCase().includes(q);
