@@ -137,7 +137,7 @@ export default function Queue() {
   const filtered = useMemo(() => {
     let items = mainQueue;
     if (filterStatus !== "all") items = items.filter(q => q.status===filterStatus || (q.status==="done" && activeVfParentIds.has(q.id)));
-    if (filterDay !== "all") { const s=Number(filterDay); items = items.filter(q => q.scheduledAt>=s && q.scheduledAt<=s+86400000-1); }
+    if (filterDay !== "all") { const s=Number(filterDay); items = items.filter(q => q.scheduledAt>=s && q.scheduledAt<=endOfDay(new Date(s))); }
     if (search.trim()) items = items.filter(q => matchesSearch(q, search.trim()));
     return sortItems(items, sortBy);
   }, [mainQueue, filterStatus, filterDay, search, sortBy, activeVfParentIds]);
@@ -150,11 +150,21 @@ export default function Queue() {
   const selectNone     = () => setSelected(new Set());
   const removeSelected = async () => { for(const id of [...selected]) await removeItem(id); setSelected(new Set()); setSelecting(false); setConfirmModal(null); };
 
+  const [forceError, setForceError] = useState(null);
   const forcePublish = useCallback(async (item) => {
+    setForceError(null);
+    // Verifica se o item ainda existe na fila antes de tentar publicar
+    const stillExists = queue.some(q => q.id === item.id);
+    if (!stillExists) {
+      setForceConfirm(null);
+      setForceError("Este agendamento foi removido e não pode mais ser publicado.");
+      return;
+    }
     setForcingId(item.id);
     try { await updateItem({...item, scheduledAt: Date.now()-1000, status:"pending"}); reloadQueue?.(); }
+    catch (err) { setForceError(err?.message || "Erro ao forçar publicação."); }
     finally { setForcingId(null); setForceConfirm(null); }
-  }, [updateItem, reloadQueue]);
+  }, [updateItem, reloadQueue, queue]);
 
   const hasActiveItems = videoFinish.some(v=>v.status==="pending"||v.status==="running") || perAccount.some(p=>p.status==="pending"||p.status==="running") || mainQueue.some(q=>q.status==="running");
   const hasPendingChildren = hasActiveItems;
@@ -163,9 +173,21 @@ export default function Queue() {
   // Polling reduzido para 30s — o SW já notifica via sw:queue-update quando algo muda
   // 8s causava acúmulo de requests junto com os PUTs do SW (request limit)
   useEffect(() => {
-    if (hasPendingChildren) pollRef.current = setInterval(reloadQueue, 30000); // 30s — scheduler roda a cada 5min, polling mais frequente não ajuda
-    else clearInterval(pollRef.current);
-    return () => clearInterval(pollRef.current);
+    const start = () => {
+      clearInterval(pollRef.current);
+      if (hasPendingChildren && !document.hidden)
+        pollRef.current = setInterval(reloadQueue, 30000);
+    };
+    const onVisibility = () => {
+      if (document.hidden) clearInterval(pollRef.current);
+      else start();
+    };
+    start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(pollRef.current);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [hasPendingChildren, reloadQueue]);
 
   useEffect(() => {
@@ -189,7 +211,11 @@ export default function Queue() {
   };
   const saveEdit = async () => {
     if (!editModal) return;
-    await updateItem({...editModal, scheduledAt: new Date(editTime).getTime(), caption: editCaption, status:"pending"});
+    // datetime-local não carrega informação de timezone — interpreta manualmente
+    // como horário local somando o offset, igual ao que openEdit faz ao contrário.
+    const parsed = new Date(editTime);
+    const scheduledAt = parsed.getTime() + parsed.getTimezoneOffset() * 60000;
+    await updateItem({...editModal, scheduledAt, caption: editCaption, status:"pending"});
     setEditModal(null);
   };
 
@@ -425,15 +451,20 @@ export default function Queue() {
       )}
 
       {forceConfirm && (
-        <div onClick={()=>setForceConfirm(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.65)",backdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div onClick={()=>{setForceConfirm(null);setForceError(null);}} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.65)",backdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg2)",border:"1px solid var(--border2)",borderRadius:16,padding:28,width:"100%",maxWidth:420,boxShadow:"0 24px 80px rgba(0,0,0,0.5)"}}>
             <div style={{fontWeight:700,fontSize:16,marginBottom:10}}>⚡ Publicar agora?</div>
             <div style={{fontSize:13,color:"var(--muted)",marginBottom:18,lineHeight:1.6}}>
               O agendamento será publicado <strong style={{color:"var(--text)"}}>imediatamente</strong>, ignorando o horário programado.
               {forceConfirm.accounts?.length>0 && <div style={{marginTop:10,display:"flex",gap:6,flexWrap:"wrap"}}>{forceConfirm.accounts.map(a=><span key={a.id} style={{fontSize:11,background:"var(--bg3)",border:"1px solid var(--border)",borderRadius:20,padding:"2px 8px"}}>@{a.username}</span>)}</div>}
             </div>
+            {forceError && (
+              <div style={{fontSize:12,color:"var(--danger)",background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:8,padding:"8px 12px",marginBottom:14}}>
+                ❌ {forceError}
+              </div>
+            )}
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <button className="btn btn-ghost btn-sm" onClick={()=>setForceConfirm(null)}>Cancelar</button>
+              <button className="btn btn-ghost btn-sm" onClick={()=>{setForceConfirm(null);setForceError(null);}}>Cancelar</button>
               <button className="btn btn-primary btn-sm" style={{background:"var(--warning)",borderColor:"var(--warning)"}} onClick={()=>forcePublish(forceConfirm)} disabled={forcingId===forceConfirm?.id}>
                 {forcingId===forceConfirm?.id?"Publicando…":"⚡ Publicar agora"}
               </button>
