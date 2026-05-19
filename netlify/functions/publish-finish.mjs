@@ -33,7 +33,9 @@ async function getFreshToken(accountId) {
 // de função e arriscam estourar o timeout de 26s da Netlify Function.
 async function checkContainer(creationId, token) {
   try {
-    const r = await fetch(`${graph(token)}/${creationId}?fields=status_code,status&access_token=${token}`);
+    const r = await fetch(`${graph(token)}/${creationId}?fields=status_code,status&access_token=${token}`, {
+      signal: AbortSignal.timeout(20000), // 20s — margem antes do timeout da Netlify Function (26s)
+    });
     const d = await r.json();
 
     if (d.error) {
@@ -69,6 +71,8 @@ async function tryPublish(accountId, creationId, token, username) {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ creation_id: creationId, access_token: token }),
+        // 6s por tentativa: 3 tentativas × 6s + 2 sleeps × 2s = 22s total — dentro dos 26s da Netlify
+        signal:  AbortSignal.timeout(6000),
       });
       const pData = await pRes.json();
 

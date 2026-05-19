@@ -101,6 +101,8 @@ async function withLock(store, fn) {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const { items, etag } = await readWithEtag(store);
     const updated = await fn(items);
+    // Guard: se fn esquecer de retornar a queue, aborta em vez de apagar tudo silenciosamente
+    if (!Array.isArray(updated)) throw new Error(`withLock: fn deve retornar um array, recebeu ${typeof updated}`);
     try {
       await writeWithLock(store, etag, updated);
       return updated;
@@ -212,12 +214,19 @@ export default async function handler(req) {
             throw new Error("Não é possível deletar um sub-item em execução (status: running)");
           }
 
-          // Se for um group, cancelar em cascata todos os sub-itens com o mesmo historyId
+          // Se for um group, cancelar em cascata todos os sub-itens com o mesmo historyId.
+          // Guard: só faz cascata se historyId for um valor definido — sem ele a condição
+          // x.historyId !== undefined seria falsa para qualquer item sem historyId,
+          // removendo itens de outros grupos ou itens normais que nunca tiveram historyId.
           if (target.type === "group") {
             const historyId = target.historyId;
-            return queue.filter(
-              (x) => String(x.id) !== String(id) && x.historyId !== historyId
-            );
+            if (historyId) {
+              return queue.filter(
+                (x) => String(x.id) !== String(id) && x.historyId !== historyId
+              );
+            }
+            // Group legado sem historyId — remove só o próprio item, sem cascata
+            return queue.filter((x) => String(x.id) !== String(id));
           }
 
           // Item simples ou sub-item não-running

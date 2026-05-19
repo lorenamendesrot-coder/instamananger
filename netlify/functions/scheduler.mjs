@@ -148,6 +148,7 @@ async function callPublishFinish(vf) {
       pending:  [{ account_id: vf.account_id, creation_id: vf.creation_id, username: vf.username }],
       accounts: vf.accounts || [],
     }),
+    signal: AbortSignal.timeout(24000), // 24s — publish-finish tem até 26s, deixa 2s de margem
   });
   if (!res.ok) throw new Error(`publish-finish HTTP ${res.status}`);
   return res.json();
@@ -355,6 +356,7 @@ async function processPerAccount(store, item) {
           refresh_token: item.driveRefreshToken,
           account_id:    item.account_id || null,
         }),
+        signal: AbortSignal.timeout(20000), // 20s — drive-proxy pode demorar em arquivos grandes
       });
       const proxyData = await proxyRes.json();
       if (!proxyRes.ok || !proxyData.url) {
