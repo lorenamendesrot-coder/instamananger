@@ -192,26 +192,39 @@ export default function Dashboard() {
       from_history:     true,
     }));
 
-    // Fila pendente (agendados)
+    // Fila — todos os itens principais (sem sub-itens type!=null)
+    // Inclui done/posted para refletir o status real em vez de mostrar "Agendado" para posts já publicados
     const queueItems = queue
-      .filter((x) => !x.type && (x.status === "pending" || x.status === "running"))
-      .slice(0, 10)
+      .filter((x) => !x.type)
       .map((q) => ({
         id:              q.id,
         post_type:       q.postType,
         default_caption: q.caption || "",
-        status:          q.status,
+        status:          q.status,          // status real: pending | running | done | posted | error
         scheduledAt:     q.scheduledAt,
-        created_at:      null,
+        created_at:      q.finishedAt || null,
       }));
 
-    // Mistura e ordena: agendados futuros primeiro (desc scheduledAt), depois histórico (desc created_at)
-    const all = [
-      ...queueItems.sort((a, b) => (a.scheduledAt || 0) - (b.scheduledAt || 0)),
-      ...histItems,
-    ];
+    // Agrupa: pendentes/rodando primeiro (ordenados por scheduledAt asc),
+    // depois publicados da fila e do histórico (ordenados por data desc)
+    const pending  = queueItems
+      .filter((x) => x.status === "pending" || x.status === "running")
+      .sort((a, b) => (a.scheduledAt || 0) - (b.scheduledAt || 0));
 
-    return all.slice(0, 6);
+    const finished = [
+      ...queueItems.filter((x) => x.status === "done" || x.status === "posted" || x.status === "error"),
+      ...histItems,
+    ].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+    // Remove duplicatas (item que aparece tanto na fila quanto no histórico): mantém o da fila (status mais atualizado)
+    const seen = new Set();
+    const deduped = [...pending, ...finished].filter((x) => {
+      if (seen.has(x.id)) return false;
+      seen.add(x.id);
+      return true;
+    });
+
+    return deduped.slice(0, 6);
   }, [history, queue]);
 
   // ── Gráfico: posts publicados por dia nos últimos 7 dias ──────────────────
