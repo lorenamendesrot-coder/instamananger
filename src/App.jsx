@@ -197,7 +197,12 @@ function SchedulerProvider({ addEntry, children }) {
     let cronAvailable = false;
 
     const detectCron = async () => {
+      // Considera "cron disponível" se o cron serverless OU o Service Worker
+      // estiver ativo. Se o SW estiver rodando, o App.jsx NÃO deve publicar
+      // posts normais para evitar disparo duplo (Bug #3).
       try {
+        const swActive = !!(navigator.serviceWorker?.controller);
+        if (swActive) { cronAvailable = true; return; }
         const res = await fetch("/api/scheduler", { method: "GET" });
         cronAvailable = res.ok || res.status === 405;
       } catch { cronAvailable = false; }
@@ -206,16 +211,32 @@ function SchedulerProvider({ addEntry, children }) {
     detectCron().catch(() => {});
     const cronCheck = setInterval(() => detectCron().catch(() => {}), 5 * 60 * 1000);
 
+    // Re-detecta quando o SW muda de estado (instalação inicial, reload)
+    const onSwChange = () => detectCron().catch(() => {});
+    navigator.serviceWorker?.addEventListener("controllerchange", onSwChange);
+
     // Recarrega fila imediatamente ao voltar para a aba (cron serverless pode ter atualizado)
     const onVisible = () => { if (document.visibilityState === "visible") reload(); };
     document.addEventListener("visibilitychange", onVisible);
 
-    // Reseta itens running travados
+    // Reseta itens running GENUINAMENTE travados (stuck há mais de 10 minutos).
+    // NUNCA reseta todos os running na montagem — o SW pode estar processando um
+    // item nesse exato momento, e resetar causaria disparo duplo fora do horário.
+    const STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutos
     const resetStuck = async () => {
       const all = await qApi.getAll();
       if (!Array.isArray(all)) return;
+      const now = Date.now();
       for (const item of all.filter((x) => x.status === "running")) {
-        await qApi.update({ ...item, status: "pending", scheduledAt: Date.now() + 5000 });
+        // Só considera travado se startedAt existe e passou o threshold,
+        // ou se scheduledAt é muito antigo (item nunca atualizou startedAt).
+        const startedAt = item.startedAt ? new Date(item.startedAt).getTime() : null;
+        const isStale = startedAt
+          ? now - startedAt > STUCK_THRESHOLD_MS
+          : item.scheduledAt && now - item.scheduledAt > STUCK_THRESHOLD_MS;
+        if (!isStale) continue; // SW ainda pode estar processando — não tocar
+        // Mantém o scheduledAt ORIGINAL para não disparar fora do horário
+        await qApi.update({ ...item, status: "pending", scheduledAt: item.scheduledAt });
       }
     };
     resetStuck().catch(() => {});
@@ -365,14 +386,19 @@ function SchedulerProvider({ addEntry, children }) {
     let ivTimeout;
     const scheduleTick = async () => {
       const all = await qApi.getAll().catch(() => []);
+      // Somente itens com status "running" justificam poll acelerado.
+      // "pending" não deve acelerar o poll — eles só devem disparar quando
+      // scheduledAt chegar, e o tick() já verifica isso. Incluir "pending"
+      // aqui fazia o loop rodar a 4s continuamente enquanto havia qualquer
+      // item agendado, mesmo para horários distantes.
       const hasRunning = Array.isArray(all) && all.some(x =>
-        !x.type && (x.status === "running" || x.status === "pending")
+        !x.type && x.status === "running"
       );
       await tick();
-      ivTimeout = setTimeout(scheduleTick, hasRunning ? 4000 : 12000);
+      ivTimeout = setTimeout(scheduleTick, hasRunning ? 5000 : 30000);
     };
     scheduleTick();
-    return () => { clearTimeout(ivTimeout); clearInterval(cronCheck); document.removeEventListener("visibilitychange", onVisible); };
+    return () => { clearTimeout(ivTimeout); clearInterval(cronCheck); document.removeEventListener("visibilitychange", onVisible); navigator.serviceWorker?.removeEventListener("controllerchange", onSwChange); };
   }, [addEntry, reload]);
 
   const addBatch = async (items) => {
