@@ -172,6 +172,7 @@ async function processVideoFinish(store, vf) {
       console.log(`[scheduler] ✅ video_finish @${vf.username} publicado`);
       await queueUpdate(store, { ...vf, status: "done", result, finishedAt: new Date().toISOString() });
       await pushResultToParent(store, vf.historyId, {
+        _subItemId:   vf.id,
         account_id:   vf.account_id,
         username:     vf.username,
         success:      true,
@@ -185,6 +186,7 @@ async function processVideoFinish(store, vf) {
       console.error(`[scheduler] ❌ video_finish @${vf.username}: ${result.error}`);
       await queueUpdate(store, { ...vf, status: "error", error: result.error });
       await pushResultToParent(store, vf.historyId, {
+        _subItemId: vf.id,
         account_id: vf.account_id,
         username:   vf.username,
         success:    false,
@@ -197,6 +199,7 @@ async function processVideoFinish(store, vf) {
     if (attempts >= (vf.maxAttempts ?? VIDEO_FINISH_MAX_ATTEMPTS)) {
       await queueUpdate(store, { ...vf, status: "error", error: "Timeout: vídeo não processou após múltiplas tentativas" });
       await pushResultToParent(store, vf.historyId, {
+        _subItemId: vf.id,
         account_id: vf.account_id,
         username:   vf.username,
         success:    false,
@@ -211,6 +214,7 @@ async function processVideoFinish(store, vf) {
     if (attempts >= (vf.maxAttempts ?? VIDEO_FINISH_MAX_ATTEMPTS)) {
       await queueUpdate(store, { ...vf, status: "error", error: err.message });
       await pushResultToParent(store, vf.historyId, {
+        _subItemId: vf.id,
         account_id: vf.account_id,
         username:   vf.username,
         success:    false,
@@ -233,15 +237,21 @@ async function pushResultToParent(store, historyId, result) {
       const parent = queue.find((x) => x.historyId === historyId && (x.type === "group" || !x.type));
       if (!parent) return queue;
 
-      const existing   = (parent.results || []).filter((r) => r.account_id !== result.account_id);
+      const existing   = (parent.results || []).filter((r) => r._subItemId !== result._subItemId || !result._subItemId
+        ? r.account_id !== result.account_id  // fallback legado: sem _subItemId, deduplica por account_id
+        : r._subItemId !== result._subItemId  // preferencial: deduplica pelo id único do sub-item
+      );
       const newResults = [...existing, result];
 
       // Verifica se ainda há sub-itens pendentes/running para este historyId.
-      // Inclui per_account com awaitingVideoFinish=true (video_finish ainda existe
-      // ou está prestes a ser criado — não pode fechar o pai ainda).
+      // Usa o _subItemId do resultado para excluir apenas o sub-item que acabou de
+      // terminar — evitar excluir por account_id, que descartaria erroneamente
+      // retries ou sub-itens de múltiplas mídias da mesma conta ainda em andamento.
+      const finishedSubItemId = result._subItemId || null;
       const pendingChildren = queue.filter(
         (x) => x.historyId === historyId &&
-               x.account_id !== result.account_id &&
+               // Exclui apenas o sub-item exato que originou este resultado
+               (finishedSubItemId ? x.id !== finishedSubItemId : x.account_id !== result.account_id) &&
                (
                  // per_account ainda processando
                  (x.type === "per_account" && (x.status === "pending" || x.status === "running")) ||
@@ -336,6 +346,7 @@ async function processPerAccount(store, item) {
       console.error(`[scheduler] ❌ drive-proxy falhou para @${item.username}:`, proxyErr.message);
       await queueUpdate(store, { ...item, status: "error", error: `Falha ao baixar vídeo do Drive: ${proxyErr.message}`, finishedAt: new Date().toISOString() });
       await pushResultToParent(store, item.historyId, {
+        _subItemId: item.id,
         account_id: item.account_id,
         username:   item.username,
         success:    false,
@@ -413,6 +424,7 @@ async function processPerAccount(store, item) {
       console.log(`[scheduler] ✅ @${item.username} publicado`);
       await queueUpdate(store, { ...item, status: "done", result, finishedAt: new Date().toISOString() });
       await pushResultToParent(store, item.historyId, {
+        _subItemId:   item.id,
         account_id:   item.account_id,
         username:     item.username,
         success:      true,
@@ -434,6 +446,7 @@ async function processPerAccount(store, item) {
       console.warn(`[scheduler] ⛔ @${item.username} erro definitivo (code ${result.errorCode}) — sem retry`);
       await queueUpdate(store, { ...item, status: "error", error: errMsg, finishedAt: new Date().toISOString() });
       await pushResultToParent(store, item.historyId, {
+        _subItemId: item.id,
         account_id: item.account_id,
         username:   item.username,
         success:    false,
@@ -454,6 +467,7 @@ async function processPerAccount(store, item) {
       // Registra resultado provisório para que a conta apareça na lista
       // (pushResultToParent sobrescreve se account_id já existir)
       await pushResultToParent(store, item.historyId, {
+        _subItemId: item.id,
         account_id: item.account_id,
         username:   item.username,
         success:    false,
@@ -465,6 +479,7 @@ async function processPerAccount(store, item) {
       // 2ª falha → desiste
       await queueUpdate(store, { ...item, status: "error", error: errMsg, finishedAt: new Date().toISOString() });
       await pushResultToParent(store, item.historyId, {
+        _subItemId: item.id,
         account_id: item.account_id,
         username:   item.username,
         success:    false,
@@ -482,6 +497,7 @@ async function processPerAccount(store, item) {
     console.error(`[scheduler] ❌ per_account @${item.username}: ${err.message}`);
     await queueUpdate(store, { ...item, status: "error", error: err.message, finishedAt: new Date().toISOString() });
     await pushResultToParent(store, item.historyId, {
+      _subItemId: item.id,
       account_id: item.account_id,
       username:   item.username,
       success:    false,
@@ -553,18 +569,23 @@ async function processItem(store, item) {
     }
   }
 
-  // Escreve todos os sub-itens num único write atômico
+  // Escreve pai (convertido para group) + todos os sub-itens num único write atômico.
+  // O runCount é incrementado aqui mesmo para itens loop — elimina o segundo
+  // queueUpdate separado que antes sobrescrevia o groupItem com o item original
+  // (sem results:[] e sem startedAt), causando estado inconsistente no pai.
   await withLock(store, (queue) => {
     // Converte o item pai para type="group"
     const parentIdx = queue.findIndex((x) => x.id === item.id);
     const groupItem = {
       ...item,
-      type:      "group",
+      type:          "group",
       historyId,
-      status:    "running",
-      results:   [],
-      startedAt: new Date().toISOString(),
+      status:        "running",
+      results:       [],
+      startedAt:     new Date().toISOString(),
       totalAccounts: total * urlsToPost.length,
+      // runCount incrementado aqui para itens loop — não precisa de write extra
+      ...(item.loop ? { runCount: (item.runCount || 0) + 1 } : {}),
     };
     if (parentIdx >= 0) queue[parentIdx] = groupItem;
     else queue.push(groupItem);
@@ -581,21 +602,6 @@ async function processItem(store, item) {
 
   const lastSlotMs = (slotIndex - 1) * ACCOUNT_GAP_MS;
   console.log(`[scheduler] ✅ item ${item.id} → ${subItems.length} sub-itens criados, último slot em ${Math.round(lastSlotMs/1000)}s`);
-
-  // Loop: reagenda o grupo para daqui a 1h (depois que todos sub-itens terminarem)
-  // A checagem de conclusão acontece no pushResultToParent.
-  if (item.loop) {
-    // Apenas marca como running — o scheduledAt será avançado pelo pushResultToParent
-    // após confirmar que todos os sub-itens publicaram com sucesso
-    await queueUpdate(store, {
-      ...item,
-      type:          "group",
-      historyId,
-      status:        "running",
-      runCount:      (item.runCount || 0) + 1,
-      totalAccounts: total * urlsToPost.length,
-    });
-  }
 }
 
 // ─── Handler principal ────────────────────────────────────────────────────────
