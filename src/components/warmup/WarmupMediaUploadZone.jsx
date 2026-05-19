@@ -200,10 +200,10 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
                     const { refresh_token } = drive.tokenData || {};
                     if (!refresh_token) throw new Error("Sessão do Drive sem refresh_token. Desconecte e reconecte.");
 
-                    const CONCURRENCY = 1;
+                    const CONCURRENCY = 3;
                     const urls = new Array(pickedVideos.length).fill(null);
                     let completed = 0;
-                    let currentName = null;
+                    
 
                     // Fila de tarefas — cada worker pega um arquivo, processa e atualiza progresso
                     const queue = pickedVideos.map((v, idx) => ({ v, idx }));
@@ -215,8 +215,8 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
                         const task = queue[queuePos++];
                         if (!task) break;
                         const { v, idx } = task;
-                        currentName = v.name;
-                        setImportProgress(completed, pickedVideos.length, currentName);
+                        
+                        setImportProgress(completed, pickedVideos.length, v.name);
                         const res  = await fetch("/api/drive-proxy", {
                           method:  "POST",
                           headers: { "Content-Type": "application/json" },
@@ -231,7 +231,7 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
                           if (validUrls.length) onAddUrl(typeConfig.id, validUrls);
                           setImportDone();
                         } else {
-                          setImportProgress(completed, pickedVideos.length, currentName);
+                          setImportProgress(completed, pickedVideos.length, v.name);
                         }
                       }
                     }
