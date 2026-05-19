@@ -611,18 +611,6 @@ async function processItem(store, item) {
 
   const historyId = item.historyId || `h-${item.id}-${Date.now()}`;
 
-  // Guarda contra processamento duplo: se já existem sub-itens com este historyId,
-  // o scheduler bateu duas vezes no mesmo item (cron overlap). Aborta.
-  // Lê a fila direto do store para ter a versão mais recente.
-  const currentQueue = await queueReadAll(store);
-  const existingChildren = currentQueue.filter(
-    (x) => x.historyId === historyId && x.type === "per_account"
-  );
-  if (existingChildren.length > 0) {
-    console.warn(`[scheduler] ⚠️ sub-itens já existem para historyId=${historyId} — abortando processItem para evitar duplicatas`);
-    return;
-  }
-
   const now = Date.now();
 
   // filter(Boolean) remove undefined/null caso mediaUrls e mediaUrl sejam ambos ausentes
@@ -672,10 +660,20 @@ async function processItem(store, item) {
   }
 
   // Escreve pai (convertido para group) + todos os sub-itens num único write atômico.
-  // O runCount é incrementado aqui mesmo para itens loop — elimina o segundo
-  // queueUpdate separado que antes sobrescrevia o groupItem com o item original
-  // (sem results:[] e sem startedAt), causando estado inconsistente no pai.
+  // Guard contra cron overlap: verifica existingChildren DENTRO do withLock, na mesma
+  // leitura usada para a escrita — elimina a race condition onde dois schedulers
+  // simultâneos passavam pelo guard (leitura externa) antes de qualquer um escrever.
+  let aborted = false;
   await withLock(store, (queue) => {
+    // Guard: se já existem sub-itens com este historyId, cron bateu duas vezes. Aborta.
+    const existingChildren = queue.filter(
+      (x) => x.historyId === historyId && x.type === "per_account"
+    );
+    if (existingChildren.length > 0) {
+      console.warn(`[scheduler] ⚠️ sub-itens já existem para historyId=${historyId} — abortando processItem para evitar duplicatas`);
+      aborted = true;
+      return queue; // devolve sem alterar nada
+    }
     // Converte o item pai para type="group"
     const parentIdx = queue.findIndex((x) => x.id === item.id);
     const groupItem = {
@@ -701,6 +699,8 @@ async function processItem(store, item) {
 
     return queue;
   });
+
+  if (aborted) return;
 
   const lastSlotMs = (slotIndex - 1) * ACCOUNT_GAP_MS;
   console.log(`[scheduler] ✅ item ${item.id} → ${subItems.length} sub-itens criados, último slot em ${Math.round(lastSlotMs/1000)}s`);
@@ -782,7 +782,7 @@ export default async function handler(request) {
   const freshQueue = stuckItems.length > 0 ? await queueReadAll(store) : queue;
 
   // Itens pendentes vencidos por tipo — ordenados por scheduledAt para respeitar a ordem cronológica
-  const dueNormal     = freshQueue.filter((x) => !x.type && (x.status === "pending" || (x.status === "posted" && x.loop)) && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
+  const dueNormal     = freshQueue.filter((x) => !x.type && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
   const duePerAccount = freshQueue.filter((x) => x.type === "per_account" && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
   const dueFinish     = freshQueue.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
 
@@ -845,9 +845,14 @@ async function runConcurrent(items, fn, limit) {
   };
 
   runNext();
-  // Aguarda todas as tarefas ativas terminarem (incluindo as que ainda serão lançadas)
+  // Aguarda todas as tarefas — Promise.all([...active]) captura o snapshot
+  // atual do Set e espera por elas; runNext() adiciona novas promises ao Set
+  // conforme os slots liberam, e cada nova promise também é aguardada porque
+  // o while externo drena o queue antes de retornar.
+  // Usamos um loop em vez de while(active.size>0)+Promise.race para evitar
+  // a janela de microtask onde active.size já é 0 mas o finally ainda não rodou.
   while (active.size > 0) {
-    await Promise.race(active);
+    await Promise.all([...active]);
   }
 }
 
