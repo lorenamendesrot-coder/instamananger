@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useRef } from "react";
 import { useAccounts, useScheduler, useHistory } from "../App.jsx";
 import { NavLink } from "react-router-dom";
 
@@ -67,7 +67,7 @@ function BarChart({ days, counts }) {
         const pct = counts[i] / max;
         const isToday = i === days.length - 1;
         return (
-          <div key={d.label} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, height: "100%" }}>
+          <div key={d.date} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, height: "100%" }}>
             <div style={{ flex: 1, width: "100%", display: "flex", alignItems: "flex-end" }}>
               <div
                 title={`${counts[i]} post(s)`}
@@ -98,7 +98,7 @@ function BarChart({ days, counts }) {
 
 function RecentPostRow({ item }) {
   const icon   = TYPE_ICON[item.post_type] || "📌";
-  const status = item.status || (item.from_scheduler ? "done" : "done");
+  const status = item.status || "done";
   const cfg    = STATUS_CFG[status] || STATUS_CFG.done;
   const when   = item.created_at || item.scheduledAt;
   const label  = when ? (() => {
@@ -159,8 +159,10 @@ export default function Dashboard() {
   const { history, reloadHistory }         = useHistory();
 
   const [refreshing, setRefreshing] = useState(false);
+  const refreshingRef = useRef(false);
   const handleRefresh = useCallback(async () => {
-    if (refreshing) return;
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
     setRefreshing(true);
     try {
       await Promise.allSettled([
@@ -169,9 +171,10 @@ export default function Dashboard() {
         reloadHistory?.(),
       ]);
     } finally {
+      refreshingRef.current = false;
       setRefreshing(false);
     }
-  }, [refreshing, reloadAccounts, reloadQueue, reloadHistory]);
+  }, [reloadAccounts, reloadQueue, reloadHistory]);
 
   // ── Métricas de contas ────────────────────────────────────────────────────
   const totalFollowers = accounts.reduce((s, a) => s + (a.followers_count || 0), 0);
@@ -232,15 +235,25 @@ export default function Dashboard() {
   }, [history, queue]);
 
   // ── Gráfico: posts publicados por dia nos últimos 7 dias ──────────────────
-  const days7 = useMemo(() => last7Days(), []);
+  // Sem useMemo: last7Days() é barato e precisa refletir a data atual a cada render
+  // (evita o gráfico ficar desatualizado se o usuário deixar o dashboard aberto virando meia-noite)
+  const days7 = last7Days();
   const chartCounts = useMemo(() => {
+    // Posts publicados que ainda estão na fila (done/posted) mas ainda não migraram pro histórico
+    const queueDone = queue
+      .filter((x) => (!x.type || x.type === "group") && (x.status === "done" || x.status === "posted") && x.finishedAt)
+      .map((x) => ({ created_at: x.finishedAt }));
+    const allPublished = [...(history || []), ...queueDone];
     return days7.map(({ date }) =>
-      (history || []).filter((h) => {
+      allPublished.filter((h) => {
         if (!h.created_at) return false;
         return new Date(h.created_at).toDateString() === date;
       }).length
     );
-  }, [history, days7]);
+  // days7 não entra nas deps: é recalculado a cada render mas é barato;
+  // colocá-lo aqui invalidaria o cache a cada render, zerando o useMemo.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [history, queue]);
 
   const postsThisWeek = chartCounts.reduce((a, b) => a + b, 0);
 
@@ -337,8 +350,8 @@ export default function Dashboard() {
             </div>
           ) : (
             <div>
-              {recentItems.map((item) => (
-                <RecentPostRow key={item.id} item={item} />
+              {recentItems.map((item, idx) => (
+                <RecentPostRow key={item.id ?? `noid-${idx}`} item={item} />
               ))}
             </div>
           )}
@@ -353,8 +366,8 @@ export default function Dashboard() {
             <NavLink to="/" style={{ fontSize: 11, color: "var(--accent3)", textDecoration: "none" }}>Gerenciar →</NavLink>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {accounts.slice(0, 8).map((acc) => (
-              <div key={acc.id} style={{
+            {accounts.slice(0, 8).map((acc, accIdx) => (
+              <div key={acc.id ?? acc.username ?? accIdx} style={{
                 display: "flex", alignItems: "center", gap: 8,
                 padding: "7px 12px", borderRadius: 10,
                 background: "var(--bg3)", border: "1px solid var(--border)",
