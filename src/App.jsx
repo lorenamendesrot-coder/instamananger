@@ -452,8 +452,6 @@ function AppShell() {
   const location       = useLocation();
   const { addEntry }   = useHistory();
 
-  useEffect(() => {}, [location.pathname]);
-
   useTokenCheck({
     accounts,
     onExpired: useCallback((expired) => {
