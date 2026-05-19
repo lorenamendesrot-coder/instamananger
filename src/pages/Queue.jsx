@@ -449,6 +449,24 @@ export default function Queue() {
   );
 }
 
+// ─── Converte numeric media_id do Instagram para shortcode de URL ─────────────
+// A API retorna IDs numéricos (ex: 17846368219941196), mas instagram.com/p/
+// espera o shortcode em base64url (ex: CxT1a2bcd3e).
+const IG_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+function mediaIdToShortcode(mediaId) {
+  try {
+    let n = BigInt(String(mediaId).split("_")[0]); // descarta sufixo _userId se houver
+    let code = "";
+    while (n > 0n) {
+      code = IG_ALPHABET[Number(n % 64n)] + code;
+      n = n / 64n;
+    }
+    return code || null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Helpers de cor por status ────────────────────────────────────────────────
 function statusStyle(status, partial) {
   if (status === "posted" && partial) return { color: "var(--warning)",  bg: "rgba(245,158,11,0.15)", border: "rgba(245,158,11,0.5)",  icon: "⚠️" };
@@ -783,10 +801,13 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
                           style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "rgba(34,197,94,0.12)", color: "var(--success)", border: "1px solid rgba(34,197,94,0.25)", fontWeight: 600, cursor: "help" }}
                         >🛡 sanitizado</span>
                       )}
-                      {r.success && r.media_id && (
-                        <a href={`https://www.instagram.com/p/${r.media_id}/`} target="_blank" rel="noopener noreferrer"
-                          style={{ color: "var(--accent-light)", fontWeight: 700, fontSize: 12 }} title="Ver no Instagram">↗</a>
-                      )}
+                      {r.success && r.media_id && (() => {
+                        const sc = mediaIdToShortcode(r.media_id);
+                        return sc ? (
+                          <a href={`https://www.instagram.com/p/${sc}/`} target="_blank" rel="noopener noreferrer"
+                            style={{ color: "var(--accent-light)", fontWeight: 700, fontSize: 12 }} title="Ver no Instagram">↗</a>
+                        ) : null;
+                      })()}
                     </span>
                     {!r.success && !isRetrying && r.error && (
                       <span style={{ fontSize: 10, color: "var(--danger)", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.error}>{r.error}</span>
