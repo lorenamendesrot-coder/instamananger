@@ -40,13 +40,10 @@ function matchesSearch(item, q) {
 
 const STATUS_INFO = {
   pending:  { label: "Agendado",            color: "var(--info)",    bg: "rgba(56,189,248,0.08)"  },
-  running:  { label: "Publicando...",        color: "var(--warning)", bg: "rgba(245,158,11,0.08)"  },
-  posted:   { label: "Publicado",            color: "var(--success)", bg: "rgba(34,197,94,0.10)"   },
-  error:    { label: "Erro",                 color: "var(--danger)",  bg: "rgba(239,68,68,0.08)"   },
-  running:  { label: "Rodando",             color: "var(--warning)", bg: "rgba(245,158,11,0.08)"  },
+  running:  { label: "Publicando...",       color: "var(--warning)", bg: "rgba(245,158,11,0.08)"  },
   done:     { label: "Publicado",           color: "var(--success)", bg: "rgba(34,197,94,0.06)"   },
   posted:   { label: "Postado com Sucesso", color: "var(--success)", bg: "rgba(34,197,94,0.10)"   },
-  error:    { label: "Erro",                color: "var(--danger)",  bg: "rgba(239,68,68,0.06)"   },
+  error:    { label: "Erro",               color: "var(--danger)",  bg: "rgba(239,68,68,0.08)"   },
 };
 
 function startOfDay(date) { const d=new Date(date); d.setHours(0,0,0,0); return d.getTime(); }
