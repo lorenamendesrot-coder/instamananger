@@ -747,6 +747,9 @@ export default function Contingency() {
       }
 
       await loadAccounts(); // recarrega tudo do IDB
+      // Salva o ID do arquivo para sobrescrever na próxima vez que salvar
+      localStorage.setItem("ctg_drive_file_id", file.id);
+      setDriveFileId(file.id);
       const parts = [];
       if (created)  parts.push(`${created} nova${created!==1?"s":""}`);
       if (updated)  parts.push(`${updated} atualizada${updated!==1?"s":""}`);
