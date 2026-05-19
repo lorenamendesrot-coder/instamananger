@@ -6,7 +6,11 @@
 import { getStore } from "@netlify/blobs";
 
 const GRAPH        = "https://graph.facebook.com/v21.0";
+const GRAPH_IG     = "https://graph.instagram.com";
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
+
+function isIGToken(token) { return token?.startsWith("IGAA"); }
+function graphBase(token) { return isIGToken(token) ? GRAPH_IG : GRAPH; }
 
 // Thresholds de pausa automática
 const PAUSE_THRESHOLDS = {
@@ -39,7 +43,7 @@ function sumValues(insightObj) {
 
 async function fetchReach(igId, token, sinceUnix, untilUnix) {
   const data = await gfetch(
-    `${GRAPH}/${igId}/insights?metric=reach&period=day&since=${sinceUnix}&until=${untilUnix}&access_token=${token}`
+    `${graphBase(token)}/${igId}/insights?metric=reach&period=day&since=${sinceUnix}&until=${untilUnix}&access_token=${token}`
   );
   if (data.error || !data.data) return null;
   return sumValues(data.data.find((m) => m.name === "reach"));
@@ -68,7 +72,7 @@ async function checkAccount(acc) {
   try {
     // Verifica token primeiro
     const profile = await gfetch(
-      `${GRAPH}/${igId}?fields=id,username,media_count&access_token=${token}`
+      `${graphBase(token)}/${igId}?fields=id,username,media_count&access_token=${token}`
     );
 
     if (profile.error?.code === 190) {

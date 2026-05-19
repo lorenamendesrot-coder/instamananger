@@ -83,13 +83,19 @@ export const handler = async (event) => {
   try {
     const store         = getAccountsStore();
     const { blobs }     = await store.list();
+    // Preserva a key original junto com o dado — necessário para salvar de volta
+    // na chave correta. Usar `account-${acc.id}` recriado quebraria contas cujo
+    // blob foi gravado com chave diferente (ex: importadas com outro prefixo).
     const accounts      = (
       await Promise.all(blobs.map(async ({ key }) => {
-        try { return await store.get(key, { type: "json" }); } catch { return null; }
+        try {
+          const acc = await store.get(key, { type: "json" });
+          return acc ? { key, acc } : null;
+        } catch { return null; }
       }))
     ).filter(Boolean);
 
-    const results = await Promise.all(accounts.map(async (acc) => {
+    const results = await Promise.all(accounts.map(async ({ key, acc }) => {
       const token = acc.access_token;
       if (!token) return { id: acc.id, username: acc.username, error: "sem token salvo" };
 
@@ -110,8 +116,8 @@ export const handler = async (event) => {
       // evitando 2-3 calls extras à Meta API por conta a cada verificação manual.
       const refreshResult = null;
 
-      // Atualiza apenas o token_status no Blobs (sem chamar Meta API de refresh)
-      await store.setJSON(`account-${acc.id}`, {
+      // Atualiza apenas o token_status no Blobs usando a key original do blob
+      await store.setJSON(key, {
         ...acc,
         token_status: isValid ? "valid" : "expired",
         updated_at:   new Date().toISOString(),
