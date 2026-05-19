@@ -239,8 +239,6 @@ function SchedulerProvider({ addEntry, children }) {
         await qApi.update({ ...item, status: "pending", scheduledAt: item.scheduledAt });
       }
     };
-    resetStuck().catch(() => {});
-
     const tick = async () => {
       const all    = await qApi.getAll();
       if (!Array.isArray(all)) return;
@@ -257,6 +255,7 @@ function SchedulerProvider({ addEntry, children }) {
           const res = await fetch("/.netlify/functions/publish-finish", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(25_000),
             body: JSON.stringify({
               pending:  [{ account_id: vf.account_id, creation_id: vf.creation_id, username: vf.username }],
               accounts: vf.accounts,
@@ -382,22 +381,19 @@ function SchedulerProvider({ addEntry, children }) {
       }
     };
 
-    // Poll adaptativo: 4s quando há itens rodando/done, 12s caso contrário
+    // Poll adaptativo: 5s quando há itens rodando, 30s caso contrário.
+    // resetStuck é aguardado antes do primeiro tick para evitar race condition
+    // onde tick processa um item que resetStuck acabou de marcar como pending.
     let ivTimeout;
     const scheduleTick = async () => {
       const all = await qApi.getAll().catch(() => []);
-      // Somente itens com status "running" justificam poll acelerado.
-      // "pending" não deve acelerar o poll — eles só devem disparar quando
-      // scheduledAt chegar, e o tick() já verifica isso. Incluir "pending"
-      // aqui fazia o loop rodar a 4s continuamente enquanto havia qualquer
-      // item agendado, mesmo para horários distantes.
       const hasRunning = Array.isArray(all) && all.some(x =>
         !x.type && x.status === "running"
       );
       await tick();
       ivTimeout = setTimeout(scheduleTick, hasRunning ? 5000 : 30000);
     };
-    scheduleTick();
+    resetStuck().catch(() => {}).finally(() => { scheduleTick(); });
     return () => { clearTimeout(ivTimeout); clearInterval(cronCheck); document.removeEventListener("visibilitychange", onVisible); navigator.serviceWorker?.removeEventListener("controllerchange", onSwChange); };
   }, [addEntry, reload]);
 
@@ -502,7 +498,7 @@ function AppShell() {
       })();
     }
     if (error) showToast("error", decodeURIComponent(error));
-  }, []);
+  }, [addAccounts, showToast]);
 
   return (
     <SchedulerProvider addEntry={addEntry}>
