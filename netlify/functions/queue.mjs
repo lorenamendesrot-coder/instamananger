@@ -126,8 +126,11 @@ export default async function handler(req) {
 
       // Limpeza automática: remove itens done/error/posted com mais de 48h
       // Evita que o payload cresça indefinidamente e cause ERR_HTTP2_PROTOCOL_ERROR
+      // EXCEÇÃO: itens loop nunca são removidos — mesmo com status="posted" eles são
+      // ativos (serão relançados pelo scheduler) e precisam ficar visíveis no frontend.
       const cutoff = Date.now() - 48 * 60 * 60 * 1000;
       const active = items.filter((x) => {
+        if (x.loop) return true; // loops sempre visíveis, independente de status ou idade
         if (x.status === "done" || x.status === "posted" || x.status === "error") {
           const ts = x.completedAt || x.failedAt || x.scheduledAt;
           if (ts && new Date(ts).getTime() < cutoff) return false;
