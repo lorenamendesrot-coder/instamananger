@@ -7,7 +7,7 @@
 //   GOOGLE_CLIENT_ID     — Client ID do OAuth 2.0 (Google Cloud Console)
 //   GOOGLE_CLIENT_SECRET — Client Secret
 
-const SCOPES = "https://www.googleapis.com/auth/drive.readonly";
+const SCOPES = "https://www.googleapis.com/auth/drive.file";
 
 function getRedirectUri(origin) {
   // Usa a origem real da requisição para montar o redirect_uri
