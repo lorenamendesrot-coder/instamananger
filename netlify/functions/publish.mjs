@@ -300,7 +300,9 @@ async function processAccount({ store, account, media_url, media_type, post_type
   const result  = await publishOne({ account, media_url, media_type, post_type, caption });
 
   if (store && state) {
-    await recordPost(store, account.id, state, result.success);
+    // Vídeos retornam { success: false, pending: true } — o container já foi criado
+    // e a cota do Instagram foi consumida. Conta como publicação para o rate limit.
+    await recordPost(store, account.id, state, result.success || !!result.pending);
   }
 
   return { account_id: account.id, username: account.username, ...result };
