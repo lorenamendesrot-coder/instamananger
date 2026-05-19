@@ -542,10 +542,20 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   const totalResults   = (item.results  || []).length;
   const allResultsIn   = totalAccounts > 0 && totalResults >= totalAccounts;
 
+  // Só mantém "running" enquanto ainda há sub-itens ativos processando.
+  // Se não há mais sub-itens em andamento, considera finalizado mesmo que
+  // nem todos os resultados tenham chegado ao array item.results
+  // (erros e video_finish completados podem não popular results).
+  const stillWaitingResults =
+    (item.status === "posted" || item.status === "done") &&
+    !allResultsIn &&
+    totalAccounts > 1 &&
+    (hasActivePa || hasActiveVf); // só espera se ainda há sub-itens rodando
+
   const effectiveStatus = isPublishing
     ? "running"
-    : (item.status === "posted" || item.status === "done") && !allResultsIn && totalAccounts > 1
-      ? "running"   // resultados parciais ainda chegando — mantém "publicando"
+    : stillWaitingResults
+      ? "running"   // resultados parciais ainda chegando (sub-itens ainda ativos)
       : item.status;
   // isPast: horário passou, ainda pending, nunca rodou — badge laranja
   const isOverdue = item.status === "pending" && item.scheduledAt < Date.now() && !item.runCount && (item.results || []).length === 0;
@@ -591,8 +601,18 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
   else if (isPublishing && hasActiveVf)        statusLabel = `🎬 Processando vídeos ${vfDone}/${vfTotal}`;
   else if (isAllFail)                          statusLabel = `❌ Falhou em todas (${resFail.length})`;
   else if (isPartial)                          statusLabel = `⚠️ ${resOk.length} publicado${resOk.length > 1 ? "s" : ""} · ${resFail.length} erro${resFail.length > 1 ? "s" : ""}`;
-  else if (effectiveStatus === "posted")       statusLabel = "✅ Postado com Sucesso!";
-  else if (effectiveStatus === "done")         statusLabel = "Publicado";
+  else if (effectiveStatus === "posted" || effectiveStatus === "done") {
+    // Mostra resumo consolidado se houver resultados por conta
+    if (results.length > 0 && totalAccounts > 1) {
+      const okCount   = resOk.length;
+      const failCount = resFail.length;
+      if (failCount > 0 && okCount > 0) statusLabel = `⚠️ ${okCount} publicado${okCount > 1 ? "s" : ""} · ${failCount} erro${failCount > 1 ? "s" : ""}`;
+      else if (failCount > 0)           statusLabel = `❌ Falhou em todas (${failCount})`;
+      else                              statusLabel = `✅ ${okCount} publicado${okCount > 1 ? "s" : ""}`;
+    } else {
+      statusLabel = effectiveStatus === "posted" ? "✅ Postado com Sucesso!" : "Publicado";
+    }
+  }
   else if (effectiveStatus === "error")        statusLabel = "Erro";
   else if (effectiveStatus === "running")      statusLabel = "Rodando";
   else if (item.status === "posted" && item.loop) {
