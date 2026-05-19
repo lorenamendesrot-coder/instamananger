@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import DrivePicker from "../components/DrivePicker.jsx";
+import { useDriveAuth } from "../useDriveAuth.js";
 
 // ─── TOTP nativo via Web Crypto API (RFC 6238) ────────────────────────────────
 
@@ -108,7 +109,6 @@ async function ctgDelete(id) {
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
 const STATUS_OPTIONS = [
-  { value: "preparada",  label: "🟡 Preparada",  color: "#f59e0b", bg: "rgba(245,158,11,0.12)"  },
   { value: "em_edicao",  label: "✏️ Em Edição",  color: "#38bdf8", bg: "rgba(56,189,248,0.12)"  },
   { value: "pronta",     label: "✅ Pronta",      color: "#22c55e", bg: "rgba(34,197,94,0.12)"   },
   { value: "em_uso",     label: "🔄 Em Uso",      color: "#a78bfa", bg: "rgba(167,139,250,0.12)" },
@@ -610,12 +610,15 @@ function AccountRow({ acc, idx, onFieldChange, onDelete, onCopyAll, onMoveToMain
 // ─── Componente Principal ─────────────────────────────────────────────────────
 
 export default function Contingency() {
+  const drive = useDriveAuth();
   const [accounts,     setAccounts]    = useState([]);
   const [loading,      setLoading]     = useState(true);
   const [search,       setSearch]      = useState("");
   const [filterStatus, setFilterStatus]= useState("todas");
   const [toastMsg,     setToastMsg]    = useState(null);
   const [importing,    setImporting]   = useState(false);
+  const [syncing,      setSyncing]     = useState(false);
+  const [driveFileId,  setDriveFileId] = useState(() => localStorage.getItem("ctg_drive_file_id") || null);
   const [isMobile,     setIsMobile]    = useState(false);
   const [drivePickerOpen, setDrivePickerOpen] = useState(false);
   const [selected,     setSelected]    = useState(new Set()); // ids selecionados para exclusão em lote
@@ -685,7 +688,7 @@ export default function Contingency() {
       const existing = await ctgGetAll();
       const byUsername = Object.fromEntries(existing.map((a) => [a.username?.toLowerCase(), a]));
 
-      const VALID_STATUS = ["preparada","em_edicao","pronta","em_uso","descartada"];
+      const VALID_STATUS = ["em_edicao","pronta","em_uso","descartada"];
       const VALID_QUALITY = ["premium","boa","media","risco"];
 
       let created = 0, updated = 0, skipped = 0;
@@ -731,7 +734,7 @@ export default function Contingency() {
             senha:     row.senha    || "",
             token2fa:  row.token2fa || "",
             nome:      row.nome     || "",
-            status:    csvStatus    || "preparada",
+            status:    csvStatus    || "em_edicao",
             qualidade: csvQuality   || "boa",
             notas:     row.notas    || "",
             created_at: now,
@@ -767,7 +770,7 @@ export default function Contingency() {
       const existing = await ctgGetAll();
       const byUsername = Object.fromEntries(existing.map((a) => [a.username?.toLowerCase(), a]));
 
-      const VALID_STATUS  = ["preparada","em_edicao","pronta","em_uso","descartada"];
+      const VALID_STATUS  = ["em_edicao","pronta","em_uso","descartada"];
       const VALID_QUALITY = ["premium","boa","media","risco"];
       let created = 0, updated = 0, skipped = 0;
 
@@ -801,7 +804,7 @@ export default function Contingency() {
           const novaConta = {
             id: uid(), username: row.username||"", senha: row.senha||"",
             token2fa: row.token2fa||"", nome: row.nome||"",
-            status: csvStatus||"preparada", qualidade: csvQuality||"boa",
+            status: csvStatus||"em_edicao", qualidade: csvQuality||"boa",
             notas: row.notas||"", created_at: now, updated_at: csvUpdated||now,
           };
           await ctgPut(novaConta);
@@ -896,9 +899,61 @@ export default function Contingency() {
 
   const handleAddEmpty = useCallback(async () => {
     const now = new Date().toISOString();
-    await saveAccount({ id: uid(), username:"", senha:"", token2fa:"", nome:"", status:"preparada", qualidade:"boa", notas:"", created_at:now, updated_at:now });
+    await saveAccount({ id: uid(), username:"", senha:"", token2fa:"", nome:"", status:"em_edicao", qualidade:"boa", notas:"", created_at:now, updated_at:now });
     showToast("success", "✏️ Nova conta adicionada.");
   }, [saveAccount, showToast]);
+
+  // ── Salvar CSV no Drive ──────────────────────────────────────────────────────
+  const handleSaveToDrive = useCallback(async () => {
+    if (!drive.isConnected) {
+      showToast("error", "⚠️ Conecte o Drive primeiro clicando no botão Drive.");
+      return;
+    }
+    if (!accounts.length) { showToast("error", "Nenhuma conta para salvar."); return; }
+    setSyncing(true);
+    try {
+      const token = await drive.getValidToken();
+      const csv   = exportCSV(accounts);
+      const blob  = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const filename = "contingencia.csv";
+
+      if (driveFileId) {
+        // Atualiza o arquivo existente (PATCH)
+        const res = await fetch(
+          `https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`,
+          { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "text/csv" }, body: blob }
+        );
+        if (res.status === 404) {
+          // Arquivo foi deletado do Drive — recria
+          localStorage.removeItem("ctg_drive_file_id");
+          setDriveFileId(null);
+          showToast("error", "Arquivo não encontrado no Drive. Tente salvar novamente.");
+          return;
+        }
+        if (!res.ok) throw new Error(`Erro HTTP ${res.status}`);
+        showToast("success", "☁️ Salvo no Drive! Use 'Drive → importar' em outro dispositivo para sincronizar.");
+      } else {
+        // Cria novo arquivo
+        const meta = JSON.stringify({ name: filename, mimeType: "text/csv" });
+        const form = new FormData();
+        form.append("metadata", new Blob([meta], { type: "application/json" }));
+        form.append("file", blob);
+        const res = await fetch(
+          "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name",
+          { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form }
+        );
+        if (!res.ok) throw new Error(`Erro HTTP ${res.status}`);
+        const data = await res.json();
+        localStorage.setItem("ctg_drive_file_id", data.id);
+        setDriveFileId(data.id);
+        showToast("success", `☁️ Arquivo "${filename}" criado no Drive! Use 'Drive → importar' em outro dispositivo para sincronizar.`);
+      }
+    } catch (err) {
+      showToast("error", "Erro ao salvar no Drive: " + err.message);
+    } finally {
+      setSyncing(false);
+    }
+  }, [drive, accounts, driveFileId, showToast]);
 
   return (
     <div style={{ padding: isMobile ? "16px 12px" : "24px 28px", maxWidth: 1400, margin: "0 auto" }}>
@@ -939,7 +994,7 @@ export default function Contingency() {
             <button className="btn btn-primary btn-sm" onClick={() => fileInputRef.current?.click()} disabled={importing}>
               {importing ? <><span className="spinner" style={{ width:11,height:11,borderTopColor:"#fff" }} /> Importando...</> : isMobile ? "📥 Arquivo" : "📥 Importar CSV/XLSX"}
             </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setDrivePickerOpen(true)} disabled={importing}
+            <button className="btn btn-ghost btn-sm" onClick={() => setDrivePickerOpen(true)} disabled={importing || syncing}
               style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
               <svg width="16" height="14" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
                 <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
@@ -950,6 +1005,18 @@ export default function Contingency() {
                 <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
               </svg>
               {!isMobile && "Drive"}
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={handleSaveToDrive}
+              disabled={syncing || !accounts.length}
+              title={drive.isConnected ? "Salvar CSV no Drive para sincronizar com outros dispositivos" : "Conecte o Drive primeiro"}
+              style={{ display:"inline-flex", alignItems:"center", gap:6, color: drive.isConnected ? "var(--success)" : "var(--muted)", borderColor: drive.isConnected ? "rgba(34,197,94,0.35)" : undefined }}
+            >
+              {syncing
+                ? <><span className="spinner" style={{ width:11, height:11, borderTopColor:"var(--success)" }} /> {!isMobile && "Salvando..."}</>
+                : <>{!isMobile && "☁️ Salvar no Drive"}{isMobile && "☁️"}</>
+              }
             </button>
             <button className="btn btn-ghost btn-sm" onClick={handleExport} disabled={!filtered.length}>{isMobile ? "📤" : "📤 Exportar CSV"}</button>
             <input ref={fileInputRef} type="file" accept=".csv,.txt,.tsv,.xlsx,.xls" style={{ display:"none" }} onChange={handleFileChange} />
