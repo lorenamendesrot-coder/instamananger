@@ -280,15 +280,28 @@ async function pushResultToParent(store, historyId, result) {
         console.log(`[scheduler] ✅ item pai ${parent.id} concluído — ${newResults.filter(r => r.success).length}/${newResults.length} conta(s) publicadas${parent.loop ? " (loop — próximo em " + new Date(updated.scheduledAt).toLocaleTimeString("pt-BR") + ")" : ""}`);
       }
 
-      // Remove itens loop órfãos com o mesmo caption que ficaram pending/running sem processar
+      // Remove itens loop órfãos que ficaram pending/running sem processar.
+      // Critério de identidade: mesmo loopGroupId (preferencial) ou mesma combinação de
+      // accounts + mediaUrl + caption. Usar só caption era inseguro: dois posts distintos
+      // com a mesma legenda poderiam cancelar um ao outro incorretamente.
       if (allDone && parent.loop) {
+        const sameGroup = (x) => {
+          // Preferencial: loopGroupId explícito (gerado na criação do item)
+          if (parent.loopGroupId && x.loopGroupId) return x.loopGroupId === parent.loopGroupId;
+          // Fallback: accounts[] + mediaUrl + caption devem bater todos
+          const sameAccounts = JSON.stringify((x.accounts || []).slice().sort()) ===
+                               JSON.stringify((parent.accounts || []).slice().sort());
+          const sameMedia    = (x.mediaUrl || "") === (parent.mediaUrl || "");
+          const sameCaption  = (x.caption  || "") === (parent.caption  || "");
+          return sameAccounts && sameMedia && sameCaption;
+        };
         return queue.map((x) => {
           if (
             x.id !== parent.id &&
             !x.type &&
             x.loop &&
             x.status === "pending" &&
-            x.caption === parent.caption &&
+            sameGroup(x) &&
             x.scheduledAt < updated.scheduledAt
           ) {
             return { ...x, status: "cancelled" };
