@@ -1020,6 +1020,16 @@ export default function Contingency() {
               </svg>
               {!isMobile && "Drive"}
             </button>
+            {drive.isConnected && (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => { drive.disconnect(); showToast("success", "🔌 Drive desconectado. Clique em Drive para reconectar."); }}
+                title="Desconectar e reconectar o Drive (aplica novas permissões)"
+                style={{ fontSize: 11, color: "var(--danger)", borderColor: "rgba(239,68,68,0.3)" }}
+              >
+                {isMobile ? "🔌" : "🔌 Reconectar Drive"}
+              </button>
+            )}
             <button
               className="btn btn-ghost btn-sm"
               onClick={handleSaveToDrive}
@@ -1096,7 +1106,7 @@ export default function Contingency() {
           borderRadius:"var(--radius)", padding:"8px 12px", cursor:"pointer",
           textAlign:"center", minWidth:80, flex:"0 0 auto", transition:"all 0.15s",
         }}>
-          <div style={{ fontSize:20, fontWeight:800, color:"var(--accent-light)" }}>{accounts.length}</div>
+          <div style={{ fontSize:20, fontWeight:800, color:"#ffffff" }}>{accounts.length}</div>
           <div style={{ fontSize:10, color:"#ffffff", marginTop:2 }}>Total</div>
         </button>
         {STATUS_OPTIONS.map((s) => (
