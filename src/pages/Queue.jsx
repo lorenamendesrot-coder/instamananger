@@ -40,6 +40,9 @@ function matchesSearch(item, q) {
 
 const STATUS_INFO = {
   pending:  { label: "Agendado",            color: "var(--info)",    bg: "rgba(56,189,248,0.08)"  },
+  running:  { label: "Publicando...",        color: "var(--warning)", bg: "rgba(245,158,11,0.08)"  },
+  posted:   { label: "Publicado",            color: "var(--success)", bg: "rgba(34,197,94,0.10)"   },
+  error:    { label: "Erro",                 color: "var(--danger)",  bg: "rgba(239,68,68,0.08)"   },
   running:  { label: "Rodando",             color: "var(--warning)", bg: "rgba(245,158,11,0.08)"  },
   done:     { label: "Publicado",           color: "var(--success)", bg: "rgba(34,197,94,0.06)"   },
   posted:   { label: "Postado com Sucesso", color: "var(--success)", bg: "rgba(34,197,94,0.10)"   },
@@ -131,7 +134,8 @@ export default function Queue() {
   const doneCount    = mainQueue.filter(q=>q.status==="done").length;
   const errorCount   = mainQueue.filter(q=>q.status==="error").length;
 
-  const dayGroups = useMemo(() => buildDayGroups(mainQueue.filter(q=>q.status==="pending"||q.status==="running")), [mainQueue]);
+  // Agrupa TODOS os itens por dia (incluindo publicados) para refletir status real
+  const dayGroups = useMemo(() => buildDayGroups(mainQueue), [mainQueue]);
 
   const filtered = useMemo(() => {
     let items = mainQueue;
@@ -380,7 +384,7 @@ export default function Queue() {
                     </div>
                     <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                       {dayItems.map(item => {
-                        const si=STATUS_INFO[item.status]||STATUS_INFO.pending;
+                        const si=STATUS_INFO[item.status]||STATUS_INFO.done;
                         const acc0=(item.accounts||[])[0];
                         return (
                           <div key={item.id} title={`@${acc0?.username} · ${item.postType} · ${new Date(item.scheduledAt).toLocaleString("pt-BR")}`}
