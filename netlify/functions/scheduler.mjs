@@ -698,5 +698,5 @@ async function runConcurrent(items, fn, limit) {
 }
 
 export const config = {
-  schedule: "*/1 * * * *",  // A cada 1 minuto — sub-itens com gap de 15s precisam de ticks mais frequentes
+  schedule: "*/5 * * * *",  // A cada 5 minutos — suficiente para gap de 15s entre contas (cobre até 20 contas por tick)
 };

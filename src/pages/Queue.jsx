@@ -149,7 +149,7 @@ export default function Queue() {
   // Polling reduzido para 30s — o SW já notifica via sw:queue-update quando algo muda
   // 8s causava acúmulo de requests junto com os PUTs do SW (request limit)
   useEffect(() => {
-    if (hasPendingChildren) pollRef.current = setInterval(reloadQueue, 10000);
+    if (hasPendingChildren) pollRef.current = setInterval(reloadQueue, 30000); // 30s — scheduler roda a cada 5min, polling mais frequente não ajuda
     else clearInterval(pollRef.current);
     return () => clearInterval(pollRef.current);
   }, [hasPendingChildren, reloadQueue]);
@@ -158,7 +158,7 @@ export default function Queue() {
     // Throttle: ignora eventos sw:queue-update se o último fetch foi há menos de 10s
     const h = () => {
       const now = Date.now();
-      if (now - lastFetch.current < 10000) return;
+      if (now - lastFetch.current < 30000) return;
       lastFetch.current = now;
       reloadQueue?.();
     };

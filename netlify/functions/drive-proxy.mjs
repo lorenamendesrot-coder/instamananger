@@ -245,10 +245,31 @@ export default async function handler(req) {
     try { body = await req.json(); }
     catch { return json({ error: "JSON invalido" }, 400); }
 
-    const { file_id, file_name, refresh_token, account_id } = body;
+    const { file_id, file_name, refresh_token, account_id, force_refresh } = body;
 
     if (!file_id)       return json({ error: "file_id obrigatorio" }, 400);
     if (!refresh_token) return json({ error: "refresh_token obrigatorio" }, 400);
+
+    // Cache hit: se o blob já existe e foi feito há menos de 6h, reutiliza.
+    // Evita re-baixar o vídeo a cada tick do loop (economiza invocações + largura de banda).
+    // force_refresh=true força o re-download (ex: usuário atualizou o arquivo no Drive).
+    if (!force_refresh && account_id) {
+      try {
+        const store   = getVideoStore();
+        const blobKey = `video-${file_id}-${account_id}`;
+        const cached  = await store.getWithMetadata(blobKey);
+        if (cached?.metadata?.uploaded_at) {
+          const ageMs = Date.now() - new Date(cached.metadata.uploaded_at).getTime();
+          if (ageMs < 6 * 60 * 60 * 1000) {
+            const proxyUrl = `${SITE_URL}/.netlify/functions/drive-proxy?key=${blobKey}`;
+            console.log(`[drive-proxy] cache hit ${file_id} conta ${account_id} (${Math.round(ageMs/60000)}min atrás)`);
+            return json({ url: proxyUrl, blob_key: blobKey, size: parseInt(cached.metadata.size || "0"), file_id, sanitized: cached.metadata.sanitized === "true", cached: true });
+          }
+        }
+      } catch {
+        // cache miss ou erro de leitura — continua com download normal
+      }
+    }
 
     try {
       const accessToken           = await renewAccessToken(refresh_token);

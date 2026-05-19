@@ -98,59 +98,17 @@ export const handler = async (event) => {
       const tokenType  = debug.type || "desconhecido";
       const scopes     = debug.scopes || [];
 
-      let refreshResult = null;
-      // Tenta renovar se válido e com menos de 30 dias ou expirado
-      if (isValid && (daysLeft === null || daysLeft < 30)) {
-        const refreshed = await tryRefresh(token);
-        if (refreshed.access_token && refreshed.access_token !== token) {
-          // Salva o token renovado no Blobs
-          await store.setJSON(`account-${acc.id}`, {
-            ...acc,
-            access_token: refreshed.access_token,
-            token_refreshed_at: new Date().toISOString(),
-            token_status: "valid",
-            updated_at: new Date().toISOString(),
-          });
-          refreshResult = {
-            renewed: true,
-            new_expires_in: refreshed.expires_in,
-          };
-        } else {
-          refreshResult = { renewed: false, reason: refreshed.error || "token já é o mais longo possível" };
-        }
-      }
+      // check-tokens é só diagnóstico — não faz refresh automático aqui.
+      // O refresh automático fica no auto-refresh-tokens.mjs (semanal),
+      // evitando 2-3 calls extras à Meta API por conta a cada verificação manual.
+      const refreshResult = null;
 
-      // Marca como expirado no Blobs se inválido — mas tenta refresh antes
-      if (!isValid) {
-        const refreshed = await tryRefresh(token);
-        if (refreshed.access_token && refreshed.access_token !== token) {
-          // Conseguiu recuperar — salva novo token e marca válido
-          await store.setJSON(`account-${acc.id}`, {
-            ...acc,
-            access_token:       refreshed.access_token,
-            token_status:       "valid",
-            token_refreshed_at: new Date().toISOString(),
-            token_expires_in:   refreshed.expires_in,
-            updated_at:         new Date().toISOString(),
-          });
-          refreshResult = { renewed: true, recovered: true, new_expires_in: refreshed.expires_in };
-        } else {
-          // Refresh também falhou — agora sim marca como expirado
-          await store.setJSON(`account-${acc.id}`, {
-            ...acc,
-            token_status: "expired",
-            updated_at:   new Date().toISOString(),
-          });
-          refreshResult = { renewed: false, reason: refreshed.error || "refresh falhou" };
-        }
-      } else if (!refreshResult) {
-        // Válido e com bastante tempo — marca como válido
-        await store.setJSON(`account-${acc.id}`, {
-          ...acc,
-          token_status: "valid",
-          updated_at: new Date().toISOString(),
-        });
-      }
+      // Atualiza apenas o token_status no Blobs (sem chamar Meta API de refresh)
+      await store.setJSON(`account-${acc.id}`, {
+        ...acc,
+        token_status: isValid ? "valid" : "expired",
+        updated_at:   new Date().toISOString(),
+      });
 
       return {
         id:           acc.id,
