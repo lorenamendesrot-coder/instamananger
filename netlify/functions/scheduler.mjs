@@ -7,6 +7,10 @@ const SITE_URL = process.env.URL || process.env.NETLIFY_URL || "";
 // 4 checks × ~90s por check ≈ ~6min. Deve bater com o valor do App.jsx (VIDEO_FINISH_MAX_ATTEMPTS).
 const VIDEO_FINISH_MAX_ATTEMPTS = 4;
 
+// Máximo de timeouts de rede (AbortError) consecutivos antes de desistir.
+// Sem esse limite o item pode ficar em loop de reagendamento indefinidamente.
+const MAX_TIMEOUT_ATTEMPTS = 3;
+
 function getQueueStore() {
   return getStore({
     name:        "insta-queue",
@@ -505,10 +509,25 @@ async function processPerAccount(store, item) {
     }
 
   } catch (err) {
-    // Timeout de rede: reagenda em 5min em vez de marcar erro definitivo
+    // Timeout de rede: reagenda em 5min, mas conta a tentativa.
+    // Sem o contador o item poderia ficar em loop infinito de timeouts
+    // sem nunca atingir o limite normal de falhas (failedAccountIds).
     if (err.name === "AbortError") {
-      console.warn(`[scheduler] ⏱ @${item.username} timeout ao chamar publish — reagendando em 5min`);
-      await queueUpdate(store, { ...item, status: "pending", scheduledAt: Date.now() + 5 * 60 * 1000 });
+      const timeoutCount = (item.timeoutCount || 0) + 1;
+      if (timeoutCount >= MAX_TIMEOUT_ATTEMPTS) {
+        console.warn(`[scheduler] ⏱ @${item.username} timeout ${timeoutCount}× seguidos — desistindo`);
+        await queueUpdate(store, { ...item, status: "error", error: "Timeout de rede repetido", finishedAt: new Date().toISOString() });
+        await pushResultToParent(store, item.historyId, {
+          _subItemId: item.originSubItemId ?? item.id,
+          account_id: item.account_id,
+          username:   item.username,
+          success:    false,
+          error:      `Timeout de rede ${timeoutCount}× seguidos`,
+        });
+        return;
+      }
+      console.warn(`[scheduler] ⏱ @${item.username} timeout (${timeoutCount}/${MAX_TIMEOUT_ATTEMPTS}) — reagendando em 5min`);
+      await queueUpdate(store, { ...item, status: "pending", scheduledAt: Date.now() + 5 * 60 * 1000, timeoutCount });
       return;
     }
     console.error(`[scheduler] ❌ per_account @${item.username}: ${err.message}`);
@@ -675,14 +694,25 @@ export default async function handler(request) {
     return false;
   });
 
-  for (const item of stuckItems) {
-    console.warn(`[scheduler] resetando item travado ${item.id} (${item.type || "normal"})`);
-    await queueUpdate(store, { ...item, status: "pending", scheduledAt: now + 5000 });
+  // Reset atômico: todos os stuckItems são gravados num único withLock.
+  // O loop anterior (um queueUpdate por item) fazia N writes separados, cada um
+  // com seu próprio lock/ETag — em caso de contention os writes intermediários
+  // podiam conflitar e deixar o estado inconsistente.
+  if (stuckItems.length > 0) {
+    const stuckIds = new Set(stuckItems.map((x) => x.id));
+    await withLock(store, (q) =>
+      q.map((x) =>
+        stuckIds.has(x.id)
+          ? (console.warn(`[scheduler] resetando item travado ${x.id} (${x.type || "normal"})`),
+             { ...x, status: "pending", scheduledAt: now + 5000 })
+          : x
+      )
+    );
   }
 
   // Relê a queue após os resets de stuck items para garantir que dueNormal/duePerAccount/dueFinish
-  // enxerguem o estado atual do store — sem isso, itens resetados acima ainda aparecem
-  // como "running" na variável em memória e podem causar processamento inconsistente.
+  // enxerguem o estado atual do store — sem isso, itens resetados ainda aparecem
+  // como "running" na variável em memória e causariam processamento inconsistente.
   const freshQueue = stuckItems.length > 0 ? await queueReadAll(store) : queue;
 
   // Itens pendentes vencidos por tipo — ordenados por scheduledAt para respeitar a ordem cronológica
@@ -728,11 +758,30 @@ export default async function handler(request) {
   });
 }
 
-// ─── Concorrência limitada ────────────────────────────────────────────────────
+// ─── Concorrência limitada (pool contínuo) ───────────────────────────────────
+// Mantém exatamente `limit` tarefas rodando ao mesmo tempo.
+// A versão anterior usava batches fixos: se 1 item de um batch de 3 travasse
+// por 22s (timeout), os outros 2 slots ficavam ociosos até ele terminar.
+// Com o pool, assim que qualquer slot libera o próximo item já entra — sem esperar.
 async function runConcurrent(items, fn, limit) {
-  for (let i = 0; i < items.length; i += limit) {
-    const batch = items.slice(i, i + limit);
-    await Promise.allSettled(batch.map(fn));
+  const queue = [...items];
+  const active = new Set();
+
+  const runNext = () => {
+    while (active.size < limit && queue.length > 0) {
+      const item = queue.shift();
+      const p = Promise.resolve().then(() => fn(item)).finally(() => {
+        active.delete(p);
+        runNext();
+      });
+      active.add(p);
+    }
+  };
+
+  runNext();
+  // Aguarda todas as tarefas ativas terminarem (incluindo as que ainda serão lançadas)
+  while (active.size > 0) {
+    await Promise.race(active);
   }
 }
 
