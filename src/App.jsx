@@ -18,6 +18,11 @@ import { useTokenCheck } from "./useTokenCheck.js";
 import { dbGetAll, dbGet, dbPut, dbPutMany, dbClear } from "./useDB.js";
 import Sidebar         from "./Sidebar.jsx";
 import Toast           from "./Toast.jsx";
+
+// Número máximo de tentativas de verificação de vídeo antes de marcar como erro.
+// Deve bater com o valor usado no scheduler (maxAttempts: 4 × ~5min = ~20min).
+// Centralizado aqui para evitar divergência entre frontend e backend.
+const VIDEO_FINISH_MAX_ATTEMPTS = 4;
 import MobileBottomNav from "./MobileBottomNav.jsx";
 
 export { useAccounts };
@@ -258,7 +263,7 @@ function SchedulerProvider({ addEntry, children }) {
             await qApi.update({ ...vf, status: "error", error: result.error });
           } else {
             const attempts = (vf.attempts || 0) + 1;
-            if (attempts >= (vf.maxAttempts || 20)) {
+            if (attempts >= (vf.maxAttempts ?? VIDEO_FINISH_MAX_ATTEMPTS)) {
               await qApi.update({ ...vf, status: "error", error: "Timeout: vídeo não processou" });
             } else {
               await qApi.update({ ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
@@ -266,7 +271,7 @@ function SchedulerProvider({ addEntry, children }) {
           }
         } catch (err) {
           const attempts = (vf.attempts || 0) + 1;
-          if (attempts >= (vf.maxAttempts || 20)) {
+          if (attempts >= (vf.maxAttempts ?? VIDEO_FINISH_MAX_ATTEMPTS)) {
             await qApi.update({ ...vf, status: "error", error: err.message }).catch(() => {});
           } else {
             await qApi.update({ ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 }).catch(() => {});
@@ -327,7 +332,7 @@ function SchedulerProvider({ addEntry, children }) {
                 accounts: item.accounts, scheduledAt: Date.now() + 30000, historyId,
                 parentId: item.id,
                 mediaUrl, postType: item.postType, mediaType: item.mediaType, caption: item.caption || "",
-                createdAt: new Date().toISOString(), attempts: 0, maxAttempts: 20,
+                createdAt: new Date().toISOString(), attempts: 0, maxAttempts: VIDEO_FINISH_MAX_ATTEMPTS,
               });
             }
 
