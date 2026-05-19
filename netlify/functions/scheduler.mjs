@@ -82,6 +82,8 @@ async function withLock(store, fn) {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const { items, etag } = await readWithEtag(store);
     const updated = await fn(items);
+    // Guard: se fn esquecer de retornar a queue, aborta em vez de apagar tudo silenciosamente
+    if (!Array.isArray(updated)) throw new Error(`withLock: fn deve retornar um array, recebeu ${typeof updated}`);
     try {
       await writeWithLock(store, etag, updated);
       return updated;
@@ -260,7 +262,13 @@ async function pushResultToParent(store, historyId, result) {
                )
       );
 
-      const allDone = pendingChildren.length === 0;
+      // allDone requer tanto ausência de filhos pendentes quanto total de resultados
+      // batendo com totalAccounts. Sem a segunda condição, posts com múltiplas mídias
+      // podem fechar "allDone" antes de todas as mídias terminarem se os resultados
+      // chegarem fora de ordem.
+      const expectedTotal = parent.totalAccounts ?? 0;
+      const allDone = pendingChildren.length === 0 &&
+        (expectedTotal === 0 || newResults.length >= expectedTotal);
       let loopNext = {};
       if (allDone && parent.loop) {
         const HOUR_MS = 3600 * 1000;
@@ -357,7 +365,7 @@ async function processPerAccount(store, item) {
       console.error(`[scheduler] ❌ drive-proxy falhou para @${item.username}:`, proxyErr.message);
       await queueUpdate(store, { ...item, status: "error", error: `Falha ao baixar vídeo do Drive: ${proxyErr.message}`, finishedAt: new Date().toISOString() });
       await pushResultToParent(store, item.historyId, {
-        _subItemId: item.id,
+        _subItemId: item.originSubItemId ?? item.id,
         account_id: item.account_id,
         username:   item.username,
         success:    false,
@@ -400,7 +408,9 @@ async function processPerAccount(store, item) {
       // Reagenda para depois do wait_ms indicado pelo rate limit
       const delay = result.wait_ms || RETRY_DELAY_MS;
       console.log(`[scheduler] ⏳ @${item.username} rate limited — reagendando em ${Math.round(delay/60000)}min`);
-      await queueUpdate(store, { ...item, status: "pending", scheduledAt: Date.now() + delay });
+      // Zera timeoutCount ao reagendar por rate limit — os timeouts anteriores
+      // não são consecutivos a este reagendamento e não devem contar para o limite.
+      await queueUpdate(store, { ...item, status: "pending", scheduledAt: Date.now() + delay, timeoutCount: 0 });
       return;
     }
 
@@ -549,6 +559,15 @@ async function processPerAccount(store, item) {
 async function processItem(store, item) {
   const accounts = item.accounts || [];
   const total    = accounts.length;
+
+  // Guard: accounts vazio criaria um group sem filhos preso em "running" para sempre
+  // (stuckItems exclui groups, então nunca seria resetado automaticamente)
+  if (total === 0) {
+    console.error(`[scheduler] ⛔ item ${item.id} sem contas — marcando como erro`);
+    await queueUpdate(store, { ...item, status: "error", error: "Nenhuma conta configurada", finishedAt: new Date().toISOString() });
+    return;
+  }
+
   console.log(`[scheduler] item ${item.id} — explodindo em ${total} sub-itens per_account`);
 
   const historyId = item.historyId || `h-${item.id}-${Date.now()}`;
