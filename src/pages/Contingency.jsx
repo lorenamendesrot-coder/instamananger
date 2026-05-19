@@ -145,10 +145,14 @@ function parseCSV(text) {
   const sep = lines[0].includes(";") ? ";" : ",";
   const rawHeaders = lines[0].split(sep).map((h) => h.trim().toLowerCase().replace(/[^a-z0-9_]/g, ""));
   const COL_MAP = {
-    username: ["username","user","login","usuario","conta","account","perfil"],
-    senha:    ["senha","password","pass","pw","secret"],
-    token2fa: ["token2fa","token","2fa","otp","totp","chave2fa"],
-    nome:     ["nome","name","display","apelido"],
+    username:   ["username","user","login","usuario","conta","account","perfil"],
+    senha:      ["senha","password","pass","pw","secret"],
+    token2fa:   ["token2fa","token","2fa","otp","totp","chave2fa"],
+    nome:       ["nome","name","display","apelido"],
+    status:     ["status","estado","situacao"],
+    qualidade:  ["qualidade","quality","tier"],
+    notas:      ["notas","notes","obs","observacoes","observacao"],
+    updated_at: ["atualizadoem","updatedat","atualizado"],
   };
   const colIndex = {};
   for (const [key, aliases] of Object.entries(COL_MAP)) {
@@ -187,10 +191,14 @@ async function parseXLSX(arrayBuffer) {
 
   // Normaliza cabeçalhos
   const COL_ALIASES = {
-    username: ["username","user","login","usuario","conta","account","perfil"],
-    senha:    ["senha","password","pass","pw","secret"],
-    token2fa: ["token2fa","token","2fa","otp","totp","chave2fa"],
-    nome:     ["nome","name","display","apelido"],
+    username:   ["username","user","login","usuario","conta","account","perfil"],
+    senha:      ["senha","password","pass","pw","secret"],
+    token2fa:   ["token2fa","token","2fa","otp","totp","chave2fa"],
+    nome:       ["nome","name","display","apelido"],
+    status:     ["status","estado","situacao"],
+    qualidade:  ["qualidade","quality","tier"],
+    notas:      ["notas","notes","obs","observacoes","observacao"],
+    updated_at: ["atualizadoem","updatedat","atualizado"],
   };
   const firstRow   = raw[0];
   const headerKeys = Object.keys(firstRow);
@@ -660,7 +668,6 @@ export default function Contingency() {
     setImporting(true);
     try {
       if (!accessToken) throw new Error("Sessão do Drive expirada. Reconecte o Drive.");
-      // Baixa diretamente da Google Drive API usando o access_token do usuário
       const res = await fetch(
         `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -672,19 +679,82 @@ export default function Contingency() {
       const arrayBuffer = await res.arrayBuffer();
       const rows = await parseDriveFile(arrayBuffer, file.name);
       if (!rows.length) { showToast("error", "Nenhuma conta encontrada no CSV."); return; }
+
+      // ── Merge inteligente: usa updated_at para resolver conflitos ──────────
       const now = new Date().toISOString();
-      const created = await Promise.all(rows.map((row) => saveAccount({
-        id: uid(), username: row.username||"", senha: row.senha||"",
-        token2fa: row.token2fa||"", nome: row.nome||"",
-        status: "preparada", qualidade: "boa", notas: "", created_at: now, updated_at: now,
-      })));
-      showToast("success", `✅ ${created.length} conta(s) importada(s) do Drive!`);
+      const existing = await ctgGetAll();
+      const byUsername = Object.fromEntries(existing.map((a) => [a.username?.toLowerCase(), a]));
+
+      const VALID_STATUS = ["preparada","em_edicao","pronta","em_uso","descartada"];
+      const VALID_QUALITY = ["premium","boa","media","risco"];
+
+      let created = 0, updated = 0, skipped = 0;
+
+      for (const row of rows) {
+        const key = row.username?.toLowerCase();
+        if (!key) continue;
+
+        // Normaliza campos vindos do CSV
+        const csvStatus   = VALID_STATUS.includes(row.status)   ? row.status   : null;
+        const csvQuality  = VALID_QUALITY.includes(row.qualidade)? row.qualidade: null;
+        const csvUpdated  = row.updated_at || null;
+
+        if (byUsername[key]) {
+          // Conta já existe — compara timestamps para decidir se atualiza
+          const local = byUsername[key];
+          const localTs = local.updated_at ? new Date(local.updated_at).getTime() : 0;
+          const driveTs = csvUpdated        ? new Date(csvUpdated).getTime()       : 0;
+
+          if (driveTs > localTs) {
+            // Drive é mais recente — atualiza campos que o CSV tem
+            const merged = {
+              ...local,
+              senha:    row.senha    || local.senha,
+              token2fa: row.token2fa || local.token2fa,
+              nome:     row.nome     || local.nome,
+              status:   csvStatus    || local.status,
+              qualidade:csvQuality   || local.qualidade,
+              notas:    row.notas    !== undefined ? row.notas : local.notas,
+              updated_at: csvUpdated || local.updated_at,
+            };
+            await ctgPut(merged);
+            byUsername[key] = merged;
+            updated++;
+          } else {
+            skipped++; // local é mais recente ou igual — não sobrescreve
+          }
+        } else {
+          // Conta nova — cria com dados do CSV
+          const novaConta = {
+            id:        uid(),
+            username:  row.username || "",
+            senha:     row.senha    || "",
+            token2fa:  row.token2fa || "",
+            nome:      row.nome     || "",
+            status:    csvStatus    || "preparada",
+            qualidade: csvQuality   || "boa",
+            notas:     row.notas    || "",
+            created_at: now,
+            updated_at: csvUpdated  || now,
+          };
+          await ctgPut(novaConta);
+          byUsername[key] = novaConta;
+          created++;
+        }
+      }
+
+      await loadAccounts(); // recarrega tudo do IDB
+      const parts = [];
+      if (created)  parts.push(`${created} nova${created!==1?"s":""}`);
+      if (updated)  parts.push(`${updated} atualizada${updated!==1?"s":""}`);
+      if (skipped)  parts.push(`${skipped} já atualizada${skipped!==1?"s":""} localmente`);
+      showToast("success", `✅ Sync Drive: ${parts.join(", ")}.`);
     } catch (err) {
       showToast("error", "Erro ao importar do Drive: " + err.message);
     } finally {
       setImporting(false);
     }
-  }, [saveAccount, showToast]);
+  }, [showToast, loadAccounts]);
 
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
@@ -692,13 +762,60 @@ export default function Contingency() {
     try {
       const rows = await parseSpreadsheet(file);
       if (!rows.length) { showToast("error", "Nenhuma conta encontrada."); return; }
+
       const now = new Date().toISOString();
-      const created = await Promise.all(rows.map((row) => saveAccount({
-        id: uid(), username: row.username||"", senha: row.senha||"",
-        token2fa: row.token2fa||"", nome: row.nome||"",
-        status: "preparada", qualidade: "boa", notas: "", created_at: now, updated_at: now,
-      })));
-      showToast("success", `✅ ${created.length} conta(s) importada(s)!`);
+      const existing = await ctgGetAll();
+      const byUsername = Object.fromEntries(existing.map((a) => [a.username?.toLowerCase(), a]));
+
+      const VALID_STATUS  = ["preparada","em_edicao","pronta","em_uso","descartada"];
+      const VALID_QUALITY = ["premium","boa","media","risco"];
+      let created = 0, updated = 0, skipped = 0;
+
+      for (const row of rows) {
+        const key = row.username?.toLowerCase();
+        if (!key) continue;
+        const csvStatus   = VALID_STATUS.includes(row.status)    ? row.status    : null;
+        const csvQuality  = VALID_QUALITY.includes(row.qualidade) ? row.qualidade : null;
+        const csvUpdated  = row.updated_at || null;
+
+        if (byUsername[key]) {
+          const local   = byUsername[key];
+          const localTs = local.updated_at ? new Date(local.updated_at).getTime() : 0;
+          const fileTs  = csvUpdated        ? new Date(csvUpdated).getTime()       : 0;
+          if (fileTs > localTs) {
+            const merged = {
+              ...local,
+              senha:    row.senha    || local.senha,
+              token2fa: row.token2fa || local.token2fa,
+              nome:     row.nome     || local.nome,
+              status:   csvStatus    || local.status,
+              qualidade:csvQuality   || local.qualidade,
+              notas:    row.notas    !== undefined ? row.notas : local.notas,
+              updated_at: csvUpdated || local.updated_at,
+            };
+            await ctgPut(merged);
+            byUsername[key] = merged;
+            updated++;
+          } else { skipped++; }
+        } else {
+          const novaConta = {
+            id: uid(), username: row.username||"", senha: row.senha||"",
+            token2fa: row.token2fa||"", nome: row.nome||"",
+            status: csvStatus||"preparada", qualidade: csvQuality||"boa",
+            notas: row.notas||"", created_at: now, updated_at: csvUpdated||now,
+          };
+          await ctgPut(novaConta);
+          byUsername[key] = novaConta;
+          created++;
+        }
+      }
+
+      await loadAccounts();
+      const parts = [];
+      if (created) parts.push(`${created} nova${created!==1?"s":""}`);
+      if (updated) parts.push(`${updated} atualizada${updated!==1?"s":""}`);
+      if (skipped) parts.push(`${skipped} já atualizada${skipped!==1?"s":""} localmente`);
+      showToast("success", `✅ ${parts.join(", ")}.`);
     } catch (err) { showToast("error", "Erro ao importar: " + err.message); }
     finally { setImporting(false); }
   };
@@ -975,8 +1092,9 @@ export default function Contingency() {
       )}
 
       {accounts.length > 0 && (
-        <div style={{ marginTop:14, fontSize:10, color:"var(--muted)", textAlign:"right" }}>
-          💾 Dados salvos localmente (IndexedDB). Exporte CSV para backup.
+        <div style={{ marginTop:14, fontSize:10, color:"var(--muted)", textAlign:"right", lineHeight:1.6 }}>
+          💾 Dados salvos localmente (IndexedDB).<br/>
+          🔄 <strong>Para sincronizar entre dispositivos:</strong> exporte CSV → salve no Drive → em outro dispositivo clique em Drive e importe o mesmo arquivo. O sync faz merge inteligente pelo <code>updated_at</code>.
         </div>
       )}
 
