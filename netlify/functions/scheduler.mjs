@@ -413,7 +413,7 @@ async function processPerAccount(store, item) {
         caption:     item.caption || "",
         createdAt:   new Date().toISOString(),
         attempts:    0,
-        maxAttempts: 4, // 4 checks × ~5min de scheduler = ~20min máximo
+        maxAttempts: VIDEO_FINISH_MAX_ATTEMPTS, // definido no topo do arquivo — altere lá se precisar mudar
       });
       // Marca o sub-item como aguardando video_finish (não done ainda)
       await queueUpdate(store, { ...item, status: "done", awaitingVideoFinish: true });
@@ -632,14 +632,20 @@ export default async function handler(request) {
   const now   = Date.now();
 
   // Reseta itens "running" travados.
-  // Grupos (type="group") nunca ficam "running" por muito tempo — eles só
-  // transitam para running durante a explosão em sub-itens (< 2s).
-  // per_account travados: 5 min de margem.
+  // IMPORTANTE: grupos (type="group") ficam "running" durante toda a publicação
+  // dos sub-itens (pode durar N contas × ACCOUNT_GAP_MS) e são fechados pelo
+  // pushResultToParent quando o último sub-item termina. Resetá-los para "pending"
+  // causaria um loop eterno: processItem aborta pelo guard de existingChildren e
+  // o grupo nunca vira "posted". Por isso grupos são EXCLUÍDOS do stuckItems.
+  // Itens legados sem type (não-group, não-per_account) também são ignorados
+  // para evitar reset acidental de formatos desconhecidos.
   const STUCK_MS_PERACCCOUNT = 5 * 60 * 1000;   // 5 min — timeout do publish + margem
   const STUCK_MS_VF          = 25 * 60 * 1000;  // 25 min — 4 checks × 5min + folga
 
   const stuckItems = queue.filter((x) => {
     if (x.status !== "running") return false;
+    // Grupos gerenciados por pushResultToParent — nunca resetar
+    if (x.type === "group") return false;
     // Usa startedAt se disponível; senão cai para scheduledAt ou createdAt como
     // estimativa conservadora — garante que itens legados (sem startedAt) também
     // sejam detectados e resetados em vez de ficarem presos para sempre.
@@ -648,7 +654,8 @@ export default async function handler(request) {
     const age = now - new Date(ref).getTime();
     if (x.type === "per_account") return age > STUCK_MS_PERACCCOUNT;
     if (x.type === "video_finish") return age > STUCK_MS_VF;
-    return age > STUCK_MS_VF; // grupos e legados
+    // Itens sem type reconhecido: não resetar para evitar comportamento inesperado
+    return false;
   });
 
   for (const item of stuckItems) {
@@ -656,10 +663,15 @@ export default async function handler(request) {
     await queueUpdate(store, { ...item, status: "pending", scheduledAt: now + 5000 });
   }
 
+  // Relê a queue após os resets de stuck items para garantir que dueNormal/duePerAccount/dueFinish
+  // enxerguem o estado atual do store — sem isso, itens resetados acima ainda aparecem
+  // como "running" na variável em memória e podem causar processamento inconsistente.
+  const freshQueue = stuckItems.length > 0 ? await queueReadAll(store) : queue;
+
   // Itens pendentes vencidos por tipo — ordenados por scheduledAt para respeitar a ordem cronológica
-  const dueNormal     = queue.filter((x) => !x.type && (x.status === "pending" || (x.status === "posted" && x.loop)) && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
-  const duePerAccount = queue.filter((x) => x.type === "per_account" && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
-  const dueFinish     = queue.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
+  const dueNormal     = freshQueue.filter((x) => !x.type && (x.status === "pending" || (x.status === "posted" && x.loop)) && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
+  const duePerAccount = freshQueue.filter((x) => x.type === "per_account" && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
+  const dueFinish     = freshQueue.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now).sort((a, b) => a.scheduledAt - b.scheduledAt);
 
   console.log(`[scheduler] ${dueNormal.length} posts + ${duePerAccount.length} per_account + ${dueFinish.length} video_finish vencidos`);
 
