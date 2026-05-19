@@ -25,9 +25,10 @@ const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "";
 
 function corsHeaders(req) {
   const origin = (req?.headers?.get ? req.headers.get("origin") : req?.headers?.origin) || "";
-  // Se ALLOWED_ORIGIN está configurado, só permite a origem exata — qualquer outra recebe
-  // a própria origem de volta (bloqueada pelo browser por não bater com o header).
-  const corsOrigin = ALLOWED_ORIGIN ? (origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : origin) : "*";
+  // Se ALLOWED_ORIGIN está configurado, sempre devolve ALLOWED_ORIGIN — origens não
+  // autorizadas recebem um valor que não bate com a delas e o browser bloqueia.
+  // Se não está configurado (dev/local), permite tudo com "*".
+  const corsOrigin = ALLOWED_ORIGIN ? ALLOWED_ORIGIN : "*";
   return {
     "Access-Control-Allow-Origin":  corsOrigin,
     "Access-Control-Allow-Headers": "Content-Type",
@@ -136,7 +137,7 @@ export default async function handler(req) {
       const active = items.filter((x) => {
         if (x.loop) return true; // loops sempre visíveis, independente de status ou idade
         if (x.status === "done" || x.status === "posted" || x.status === "error") {
-          const ts = x.completedAt || x.failedAt || x.scheduledAt;
+          const ts = x.completedAt || x.failedAt || x.createdAt || x.scheduledAt;
           if (ts && new Date(ts).getTime() < cutoff) return false;
         }
         return true;
@@ -222,7 +223,8 @@ export default async function handler(req) {
             const historyId = target.historyId;
             if (historyId) {
               return queue.filter(
-                (x) => String(x.id) !== String(id) && x.historyId !== historyId
+                (x) => String(x.id) !== String(id) &&
+                       !(x.historyId === historyId && (x.parentId === id || x.type === "per_account" || x.type === "video_finish"))
               );
             }
             // Group legado sem historyId — remove só o próprio item, sem cascata
