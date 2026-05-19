@@ -586,7 +586,15 @@ async function processItem(store, item) {
 
   const now = Date.now();
 
-  const urlsToPost = item.mediaUrls || [item.mediaUrl];
+  // filter(Boolean) remove undefined/null caso mediaUrls e mediaUrl sejam ambos ausentes
+  const urlsToPost = (item.mediaUrls || [item.mediaUrl]).filter(Boolean);
+
+  // Guard: sem mídia válida não há o que publicar
+  if (urlsToPost.length === 0) {
+    console.error(`[scheduler] ⛔ item ${item.id} sem mediaUrl — marcando como erro`);
+    await queueUpdate(store, { ...item, status: "error", error: "Nenhuma URL de mídia configurada", finishedAt: new Date().toISOString() });
+    return;
+  }
 
   // Para múltiplas mídias, escalonamos: mídia 0 conta 0, mídia 0 conta 1, ...,
   // mídia 1 conta 0, etc. Gap entre cada publicação = ACCOUNT_GAP_MS.
