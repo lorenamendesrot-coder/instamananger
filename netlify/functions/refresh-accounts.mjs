@@ -22,7 +22,7 @@ function getAccountsStore() {
 }
 
 export const handler = async (event) => {
-  if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers };
+  if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: HEADERS };
   if (event.httpMethod !== "POST")
     return { statusCode: 405, headers: HEADERS, body: JSON.stringify({ error: "Método não permitido" }) };
 
