@@ -132,21 +132,32 @@ function HistoryCard({ entry, isExpanded, onToggle }) {
           {TYPE_ICON[entry.post_type]} {TYPE_LABEL[entry.post_type] || entry.post_type}
         </span>
 
-        {/* Usernames inline */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 3, flex: 1, minWidth: 0 }}>
+        {/* Usernames inline — três grupos mutuamente exclusivos com separador visual */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 3, flex: 1, minWidth: 0, alignItems: "center" }}>
+
+          {/* Fallback: só aparece quando não há results nem pending (entry recém-criado) */}
           {fallbackAccs.map((a, i) => (
             <span key={`fb-${i}`} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 20, background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", color: "var(--info)", fontWeight: 500 }}>
               ⏳ @{a.username}
             </span>
           ))}
-          {pendingAccs.map((a, i) => (
-            <span key={`p-${i}`} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 20, background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", color: "var(--info)", fontWeight: 500 }}>
-              ⏳ @{a.username}
-            </span>
-          ))}
+
+          {/* Concluídos (results) — renderizados primeiro para dar destaque */}
           {resultAccs.map((r, i) => (
             <span key={`r-${i}`} title={r.error || ""} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 20, background: r.success ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)", border: `1px solid ${r.success ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)"}`, color: r.success ? "var(--success)" : "var(--danger)", fontWeight: 500 }}>
               {r.success ? "✓" : "✗"} @{r.username}
+            </span>
+          ))}
+
+          {/* Separador visual só quando os dois grupos coexistem */}
+          {resultAccs.length > 0 && pendingAccs.length > 0 && (
+            <span style={{ fontSize: 10, color: "var(--muted)", margin: "0 2px", userSelect: "none" }}>·</span>
+          )}
+
+          {/* Pendentes — aparecem depois dos concluídos, claramente separados */}
+          {pendingAccs.map((a, i) => (
+            <span key={`p-${i}`} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 20, background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", color: "var(--info)", fontWeight: 500 }}>
+              ⏳ @{a.username}
             </span>
           ))}
         </div>
