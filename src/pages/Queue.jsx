@@ -142,6 +142,9 @@ export default function Queue() {
     return sortItems(items, sortBy);
   }, [mainQueue, filterStatus, filterDay, search, sortBy, activeVfParentIds]);
 
+  // Limpa a seleção sempre que o filtro muda — evita deletar itens invisíveis
+  useEffect(() => { setSelected(new Set()); }, [filterStatus, filterDay, search]);
+
   const toggleSelect   = (id) => setSelected(prev => { const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; });
   const selectAll      = () => setSelected(new Set(filtered.map(i=>i.id)));
   const selectNone     = () => setSelected(new Set());
