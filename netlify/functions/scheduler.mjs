@@ -445,7 +445,7 @@ async function processPerAccount(store, item) {
       console.warn(`[scheduler] ⛔ @${item.username} erro definitivo (code ${result.errorCode}) — sem retry`);
       await queueUpdate(store, { ...item, status: "error", error: errMsg, finishedAt: new Date().toISOString() });
       await pushResultToParent(store, item.historyId, {
-        _subItemId: item.id,
+        _subItemId: item.originSubItemId ?? item.id,
         account_id: item.account_id,
         username:   item.username,
         success:    false,
@@ -453,6 +453,10 @@ async function processPerAccount(store, item) {
       });
     } else if (!alreadyFailed.includes(item.account_id)) {
       // 1ª falha recuperável → reagenda em 60min
+      // originSubItemId: preserva o _subItemId original para que pushResultToParent
+      // consiga localizar e substituir o resultado provisório inserido abaixo.
+      // Sem isso o retry criaria um 2º registro no histórico em vez de sobrescrever.
+      const originSubItemId = item.originSubItemId ?? item.id;
       await queueSave(store, {
         ...item,
         id:               `retry-${item.id}-${Date.now()}`,
@@ -460,13 +464,14 @@ async function processPerAccount(store, item) {
         scheduledAt:      Date.now() + RETRY_DELAY_MS,
         failedAccountIds: [...alreadyFailed, item.account_id],
         retryOf:          item.id,
+        originSubItemId,          // ← garante deduplicação correta no pushResultToParent
         createdAt:        new Date().toISOString(),
       });
       await queueUpdate(store, { ...item, status: "done", skippedForRetry: true });
       // Registra resultado provisório para que a conta apareça na lista
-      // (pushResultToParent sobrescreve se account_id já existir)
+      // (pushResultToParent sobrescreve se _subItemId já existir)
       await pushResultToParent(store, item.historyId, {
-        _subItemId: item.id,
+        _subItemId: originSubItemId,
         account_id: item.account_id,
         username:   item.username,
         success:    false,
@@ -478,7 +483,7 @@ async function processPerAccount(store, item) {
       // 2ª falha → desiste
       await queueUpdate(store, { ...item, status: "error", error: errMsg, finishedAt: new Date().toISOString() });
       await pushResultToParent(store, item.historyId, {
-        _subItemId: item.id,
+        _subItemId: item.originSubItemId ?? item.id,
         account_id: item.account_id,
         username:   item.username,
         success:    false,
@@ -496,7 +501,7 @@ async function processPerAccount(store, item) {
     console.error(`[scheduler] ❌ per_account @${item.username}: ${err.message}`);
     await queueUpdate(store, { ...item, status: "error", error: err.message, finishedAt: new Date().toISOString() });
     await pushResultToParent(store, item.historyId, {
-      _subItemId: item.id,
+      _subItemId: item.originSubItemId ?? item.id,
       account_id: item.account_id,
       username:   item.username,
       success:    false,
