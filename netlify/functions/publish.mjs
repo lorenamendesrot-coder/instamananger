@@ -243,9 +243,10 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
 
   try {
     const cRes  = await fetch(`${graph(token)}/${account.id}/media`, {
-      method: "POST",
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body:    JSON.stringify(payload),
+      signal:  AbortSignal.timeout(20000), // 20s — 2s de margem antes do AbortController do scheduler (22s)
     });
     const cData = await cRes.json();
     if (cData.error) {
@@ -263,9 +264,10 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
 
     // Imagens: publica diretamente
     const pRes  = await fetch(`${graph(token)}/${account.id}/media_publish`, {
-      method: "POST",
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ creation_id: cData.id, access_token: token }),
+      body:    JSON.stringify({ creation_id: cData.id, access_token: token }),
+      signal:  AbortSignal.timeout(20000), // 20s — mesma margem
     });
     const pData = await pRes.json();
     if (pData.error) return { success: false, error: pData.error.message, errorCode: pData.error.code };
