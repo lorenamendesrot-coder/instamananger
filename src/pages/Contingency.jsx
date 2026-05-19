@@ -934,6 +934,11 @@ export default function Contingency() {
           showToast("error", "Arquivo não encontrado no Drive. Tente salvar novamente.");
           return;
         }
+        if (res.status === 403) {
+          drive.disconnect();
+          showToast("error", "⚠️ Sem permissão de escrita. Desconectando Drive — reconecte para aplicar o novo acesso.");
+          return;
+        }
         if (!res.ok) throw new Error(`Erro HTTP ${res.status}`);
         showToast("success", "☁️ Salvo no Drive! Use 'Drive → importar' em outro dispositivo para sincronizar.");
       } else {
@@ -946,6 +951,11 @@ export default function Contingency() {
           "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name",
           { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form }
         );
+        if (res.status === 403) {
+          drive.disconnect();
+          showToast("error", "⚠️ Sem permissão de escrita. Desconectando Drive — reconecte para aplicar o novo acesso.");
+          return;
+        }
         if (!res.ok) throw new Error(`Erro HTTP ${res.status}`);
         const data = await res.json();
         localStorage.setItem("ctg_drive_file_id", data.id);
@@ -1087,7 +1097,7 @@ export default function Contingency() {
           textAlign:"center", minWidth:80, flex:"0 0 auto", transition:"all 0.15s",
         }}>
           <div style={{ fontSize:20, fontWeight:800, color:"var(--accent-light)" }}>{accounts.length}</div>
-          <div style={{ fontSize:10, color:"var(--text)", marginTop:2 }}>Total</div>
+          <div style={{ fontSize:10, color:"#ffffff", marginTop:2 }}>Total</div>
         </button>
         {STATUS_OPTIONS.map((s) => (
           <button key={s.value} onClick={() => setFilterStatus((f) => f===s.value ? "todas" : s.value)} style={{
