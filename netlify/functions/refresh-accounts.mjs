@@ -5,7 +5,11 @@
 import { getStore } from "@netlify/blobs";
 
 const GRAPH      = "https://graph.facebook.com/v21.0";
+const GRAPH_IG   = "https://graph.instagram.com";
 const STORE_NAME = "insta-accounts";
+
+function isIGToken(token) { return token?.startsWith("IGAA"); }
+function graphBase(token) { return isIGToken(token) ? GRAPH_IG : GRAPH; }
 
 const HEADERS = {
   "Content-Type": "application/json",
@@ -43,7 +47,7 @@ export const handler = async (event) => {
         "followers_count", "follows_count", "media_count",
       ].join(",");
 
-      const res  = await fetch(`${GRAPH}/${acc.id}?fields=${fields}&access_token=${acc.access_token}`);
+      const res  = await fetch(`${graphBase(acc.access_token)}/${acc.id}?fields=${fields}&access_token=${acc.access_token}`);
       const data = await res.json();
 
       if (data.error) {

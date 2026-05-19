@@ -7,8 +7,12 @@
 //   3. Para cada reel, busca métricas individuais: plays, reach, likes, comments, shares, saved
 //   4. Retorna lista ordenada por engajamento total
 
-const GRAPH = "https://graph.facebook.com/v21.0";
+const GRAPH    = "https://graph.facebook.com/v21.0";
+const GRAPH_IG = "https://graph.instagram.com";
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
+
+function isIGToken(token) { return token?.startsWith("IGAA"); }
+function graphBase(token) { return isIGToken(token) ? GRAPH_IG : GRAPH; }
 
 async function gfetch(url, timeoutMs = 10000) {
   const ctrl = new AbortController();
@@ -26,13 +30,14 @@ async function gfetch(url, timeoutMs = 10000) {
 // Busca métricas individuais de um reel
 async function fetchReelInsights(mediaId, token) {
   const metrics = ["plays", "reach", "likes", "comments", "shares", "saved", "total_interactions", "ig_reels_avg_watch_time", "ig_reels_video_view_total_time"];
-  const url = `${GRAPH}/${mediaId}/insights?metric=${metrics.join(",")}&access_token=${token}`;
+  const base = graphBase(token);
+  const url = `${base}/${mediaId}/insights?metric=${metrics.join(",")}&access_token=${token}`;
   const data = await gfetch(url);
 
   if (data.error || !data.data) {
     // Fallback com métricas básicas
     const fallback = await gfetch(
-      `${GRAPH}/${mediaId}/insights?metric=plays,reach,likes,comments,shares,saved&access_token=${token}`
+      `${base}/${mediaId}/insights?metric=plays,reach,likes,comments,shares,saved&access_token=${token}`
     );
     if (fallback.error || !fallback.data) {
       return { error: fallback.error?.message || data.error?.message };
@@ -105,7 +110,7 @@ export default async function handler(req) {
 
   try {
     // 1. Busca mídia do perfil (reels)
-    const mediaUrl = `${GRAPH}/${ig_id}/media` +
+    const mediaUrl = `${graphBase(token)}/${ig_id}/media` +
       `?fields=id,media_type,media_product_type,timestamp,thumbnail_url,permalink,caption` +
       `&limit=${limit}` +
       `&access_token=${token}`;

@@ -167,9 +167,14 @@ export const handler = async (event) => {
       accounts = body.accounts || [];
     } else {
       // Cron: lê contas do Netlify Blobs
-      const store = getStore("accounts");
-      const raw   = await store.get("list", { type: "json" }).catch(() => null);
-      accounts    = raw?.accounts || [];
+      const store = getStore("insta-accounts");
+      const { blobs } = await store.list().catch(() => ({ blobs: [] }));
+      for (const { key } of blobs) {
+        try {
+          const acc = await store.get(key, { type: "json" });
+          if (acc?.id && acc?.access_token) accounts.push(acc);
+        } catch { /* ignora entradas inválidas */ }
+      }
     }
 
     if (!accounts.length) {
