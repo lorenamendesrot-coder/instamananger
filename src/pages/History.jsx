@@ -215,6 +215,18 @@ export default function History() {
   const [expandedGroups, setExpandedGroups] = useState({});
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showGroupMenu, setShowGroupMenu] = useState(false);
+  const sortRef  = useRef(null);
+  const groupRef = useRef(null);
+
+  // Fecha dropdowns ao clicar fora deles
+  useEffect(() => {
+    const handler = (e) => {
+      if (sortRef.current  && !sortRef.current.contains(e.target))  setShowSortMenu(false);
+      if (groupRef.current && !groupRef.current.contains(e.target)) setShowGroupMenu(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   // ── Auto-reload ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -336,7 +348,7 @@ export default function History() {
           <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
 
             {/* Dropdown Ordenar */}
-            <div style={{ position: "relative" }}>
+            <div ref={sortRef} style={{ position: "relative" }}>
               <button className="btn btn-ghost btn-sm" onClick={() => { setShowSortMenu(p => !p); setShowGroupMenu(false); }}
                 style={{ fontSize: 12, gap: 5 }}>
                 ↕ {sortLabel} ▾
@@ -360,7 +372,7 @@ export default function History() {
             </div>
 
             {/* Dropdown Agrupar */}
-            <div style={{ position: "relative" }}>
+            <div ref={groupRef} style={{ position: "relative" }}>
               <button className="btn btn-ghost btn-sm" onClick={() => { setShowGroupMenu(p => !p); setShowSortMenu(false); }}
                 style={{ fontSize: 12, gap: 5 }}>
                 ⊞ {groupLabel} ▾
