@@ -138,7 +138,7 @@ export const handler = async (event) => {
 
       if (check.not_ready) {
         console.log(`[publish-finish] @${item.username} ainda IN_PROGRESS`);
-        return null; // null = não pronto, scheduler vai reagendar
+        return { account_id, username: item.username || account?.username, not_ready: true };
       }
 
       if (check.expired || (!check.ready && check.error)) {
@@ -149,22 +149,19 @@ export const handler = async (event) => {
         return await tryPublish(account_id, creation_id, token, item.username || account?.username);
       }
 
-      return null;
+      return { account_id, username: item.username || account?.username, not_ready: true };
     })
   );
 
-  // Filtra resultados:
-  // - null = ainda IN_PROGRESS (não inclui, scheduler vai reagendar)
-  // - rejected = erro inesperado (inclui como erro explícito para o SW não tratar como IN_PROGRESS)
+  // Mapeia resultados — rejected = erro inesperado vira objeto de erro explícito
   const results = settled
     .map((s, i) => {
-      if (s.status === "fulfilled") return s.value; // null ou objeto resultado
+      if (s.status === "fulfilled") return s.value; // { not_ready } ou objeto resultado
       // Promise rejeitada — exceção inesperada dentro do map
       const item = pending[i];
       console.error(`[publish-finish] exceção inesperada para @${item?.username}:`, s.reason?.message || s.reason);
       return { account_id: item?.account_id, username: item?.username, success: false, error: s.reason?.message || "Erro interno", errorCode: null };
-    })
-    .filter((r) => r !== null);
+    });
 
   return { statusCode: 200, headers, body: JSON.stringify({ results }) };
 };

@@ -176,7 +176,7 @@ async function processVideoFinish(store, vf) {
       return;
     }
 
-    if (result && !result.success) {
+    if (result && !result.success && !result.not_ready) {
       console.error(`[scheduler] ❌ video_finish @${vf.username}: ${result.error}`);
       await queueUpdate(store, { ...vf, status: "error", error: result.error });
       await pushResultToParent(store, vf.historyId, {
@@ -188,6 +188,8 @@ async function processVideoFinish(store, vf) {
       });
       return;
     }
+
+    // not_ready explícito (IN_PROGRESS) ou resultado ausente — reagendar
 
     const attempts = (vf.attempts || 0) + 1;
     if (attempts >= (vf.maxAttempts ?? VIDEO_FINISH_MAX_ATTEMPTS)) {
