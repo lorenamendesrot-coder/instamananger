@@ -78,9 +78,10 @@ function sortEntries(entries, sortBy) {
 // ─── HistoryCard ──────────────────────────────────────────────────────────────
 function HistoryCard({ entry, isExpanded, onToggle }) {
   const successCount  = (entry.results || []).filter((r) => r.success).length;
-  const finishedCount = (entry.results || []).length;
-  const pendingCount  = (entry.pending_accounts || []).length;
-  const totalAcc      = finishedCount + pendingCount;
+  const finishedCount = (entry.results || []).length;   // contas que JÁ terminaram (com ou sem erro)
+  const pendingCount  = (entry.pending_accounts || []).length; // contas que AINDA não rodaram
+  // ↳ Problema 1 corrigido: pending NÃO entra no denominador.
+  //   "2/5" (errado) → "2/2 pub. · 3 aguardando" (correto)
   const onlyPending   = pendingCount > 0 && finishedCount === 0;
 
   const src    = SOURCE_BADGE[entry.source] || (entry.from_scheduler ? SOURCE_BADGE.schedule : SOURCE_BADGE.new_post);
@@ -107,11 +108,19 @@ function HistoryCard({ entry, isExpanded, onToggle }) {
         {/* Ícone do tipo */}
         <span style={{ fontSize: 16, flexShrink: 0 }}>{TYPE_ICON[entry.post_type] || "📌"}</span>
 
-        {/* Badge publicado */}
+        {/* Badge publicado — mostra só finishedCount como denominador */}
         <span className={`badge ${allOk ? "badge-success" : allBad ? "badge-danger" : "badge-warning"}`} style={{ fontSize: 11 }}>
-          {pendingCount > 0 && "⏳ "}
-          {onlyPending ? `0/${pendingCount + fallbackAccs.length}` : `${successCount}/${totalAcc}`} pub.
+          {onlyPending
+            ? `⏳ 0/${pendingCount + fallbackAccs.length} pub.`
+            : `${successCount}/${finishedCount} pub.`}
         </span>
+
+        {/* Badge de pendentes separado — só aparece quando há concluídos E pendentes ao mesmo tempo */}
+        {pendingCount > 0 && finishedCount > 0 && (
+          <span className="badge" style={{ fontSize: 11, background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.25)", color: "var(--info)" }}>
+            ⏳ {pendingCount} aguardando
+          </span>
+        )}
 
         {/* Badge origem */}
         <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, fontWeight: 600, background: src.bg, border: `1px solid ${src.border}`, color: src.color, flexShrink: 0 }}>
