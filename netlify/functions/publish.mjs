@@ -103,16 +103,21 @@ async function resolveGoogleDriveUrl(url) {
       `[publish] Drive validado: HTTP ${status}, Content-Type: ${contentType || "(não informado)"}`
     );
   } catch (err) {
-    // Timeout de rede
-    if (err.name === "TimeoutError") {
+    // Timeout explícito do AbortSignal
+    if (err.name === "TimeoutError" || err.name === "AbortError") {
       throw new Error(
         `Google Drive demorou mais de 10 s para responder ao HEAD request. ` +
         `O Instagram pode não conseguir baixar o arquivo. ` +
         `Verifique a URL ou re-hospede a mídia.`
       );
     }
-    // Re-lança erros de validação lançados acima
-    throw err;
+    // Erros de validação lançados acima (403, 404, HTML) — re-lança com mensagem já amigável
+    if (err.message && !err.message.includes("fetch")) throw err;
+    // Erro de rede genérico (ECONNREFUSED, Failed to fetch, DNS, etc.)
+    throw new Error(
+      `Não foi possível verificar o arquivo no Google Drive (erro de rede: ${err.message}). ` +
+      `Verifique sua conexão ou re-hospede a mídia em outro serviço.`
+    );
   }
 
   return direct;
@@ -177,9 +182,11 @@ async function canPublish(store, id) {
   const now    = Date.now();
   const localH = ((new Date(now).getUTCHours() + TZ_OFFSET) % 24 + 24) % 24;
   if (localH < W_START || localH >= W_END) {
-    const hoursUntilStart = localH >= W_END
-      ? (24 - localH + W_START)
-      : (W_START - localH);
+    // localH < W_START → falta (W_START - localH) horas para abrir
+    // localH >= W_END  → falta (24 - localH + W_START) horas para abrir no dia seguinte
+    const hoursUntilStart = localH < W_START
+      ? (W_START - localH)
+      : (24 - localH + W_START);
     const w = hoursUntilStart * 3600000 - (new Date(now).getMinutes() * 60000 + new Date(now).getSeconds() * 1000);
     return { ok: false, state: s, reason: `Fora da janela (${W_START}h-${W_END}h local). Aguardar ${fmtWait(Math.max(w, 0))}.`, waitMs: Math.max(w, 0) };
   }
@@ -313,10 +320,11 @@ async function processAccount({ store, account, media_url, media_type, post_type
 // ─── Handler ──────────────────────────────────────────────────────────────────
 export const handler = async (event) => {
   const origin     = event.headers?.origin || "";
-  // Se ALLOWED_ORIGIN está configurado, só permite a origem exata — qualquer outra recebe
-  // seu próprio valor de volta, fazendo o browser rejeitar a resposta por CORS.
-  // Se não está configurado (dev/local), permite tudo com "*".
-  const corsOrigin = ALLOWED_ORIGIN ? (origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : origin) : "*";
+  // Se ALLOWED_ORIGIN está configurado, só espelha a origem se ela bater exatamente.
+  // Origens não autorizadas recebem ALLOWED_ORIGIN no header — o browser rejeita
+  // porque o valor não bate com a origem da requisição, bloqueando o acesso.
+  // Se ALLOWED_ORIGIN não está configurado (dev/local), permite tudo com "*".
+  const corsOrigin = ALLOWED_ORIGIN ? (origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : ALLOWED_ORIGIN) : "*";
   const headers    = {
     "Access-Control-Allow-Origin":  corsOrigin,
     "Access-Control-Allow-Headers": "Content-Type",
