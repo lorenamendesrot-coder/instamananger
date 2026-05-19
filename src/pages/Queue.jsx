@@ -128,7 +128,7 @@ export default function Queue() {
 
   const pendingCount = mainQueue.filter(q=>q.status==="pending").length;
   const runningCount = mainQueue.filter(q=>q.status==="running").length;
-  const doneCount    = mainQueue.filter(q=>q.status==="done").length;
+  const doneCount    = mainQueue.filter(q=>q.status==="done"||q.status==="posted").length;
   const errorCount   = mainQueue.filter(q=>q.status==="error").length;
 
   // Agrupa TODOS os itens por dia (incluindo publicados) para refletir status real
@@ -136,7 +136,10 @@ export default function Queue() {
 
   const filtered = useMemo(() => {
     let items = mainQueue;
-    if (filterStatus !== "all") items = items.filter(q => q.status===filterStatus || (q.status==="done" && activeVfParentIds.has(q.id)));
+    if (filterStatus !== "all") items = items.filter(q => {
+      if (filterStatus === "done") return q.status==="done" || q.status==="posted" || (activeVfParentIds.has(q.id));
+      return q.status === filterStatus;
+    });
     if (filterDay !== "all") { const s=Number(filterDay); items = items.filter(q => q.scheduledAt>=s && q.scheduledAt<=endOfDay(new Date(s))); }
     if (search.trim()) items = items.filter(q => matchesSearch(q, search.trim()));
     return sortItems(items, sortBy);
@@ -148,9 +151,17 @@ export default function Queue() {
   const toggleSelect   = (id) => setSelected(prev => { const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; });
   const selectAll      = () => setSelected(new Set(filtered.map(i=>i.id)));
   const selectNone     = () => setSelected(new Set());
-  const removeSelected = async () => { for(const id of [...selected]) await removeItem(id); setSelected(new Set()); setSelecting(false); setConfirmModal(null); };
+  const removeSelected = async () => {
+    try { for(const id of [...selected]) await removeItem(id); }
+    finally { setSelected(new Set()); setSelecting(false); setConfirmModal(null); }
+  };
 
   const [forceError, setForceError] = useState(null);
+  const openForceConfirm = useCallback((item) => {
+    setForceError(null);
+    setForceConfirm(item);
+  }, []);
+
   const forcePublish = useCallback(async (item) => {
     setForceError(null);
     // Verifica se o item ainda existe na fila antes de tentar publicar
@@ -211,11 +222,9 @@ export default function Queue() {
   };
   const saveEdit = async () => {
     if (!editModal) return;
-    // datetime-local não carrega informação de timezone — interpreta manualmente
-    // como horário local somando o offset, igual ao que openEdit faz ao contrário.
-    const parsed = new Date(editTime);
-    const scheduledAt = parsed.getTime() + parsed.getTimezoneOffset() * 60000;
-    await updateItem({...editModal, scheduledAt, caption: editCaption, status:"pending"});
+    // new Date("YYYY-MM-DDTHH:mm") interpreta a string como horário local (spec ECMAScript),
+    // então .getTime() já retorna o timestamp UTC correto — sem manipular offset manualmente.
+    await updateItem({...editModal, scheduledAt: new Date(editTime).getTime(), caption: editCaption, status:"pending"});
     setEditModal(null);
   };
 
@@ -359,7 +368,7 @@ export default function Queue() {
             </div>
           ) : (
             <QueueList items={filtered} filterDay={filterDay} vfByParent={vfByParent} paByHistory={paByHistory} activeVfParentIds={activeVfParentIds}
-              onEdit={openEdit} onRemove={(id)=>setConfirmModal({type:"removeItem",id})} onForce={(item)=>setForceConfirm(item)}
+              onEdit={openEdit} onRemove={(id)=>setConfirmModal({type:"removeItem",id})} onForce={openForceConfirm}
               forcingId={forcingId} selecting={selecting} selected={selected} onToggleSelect={toggleSelect} />
           )}
         </div>
@@ -532,13 +541,13 @@ function QueueList({ items, filterDay, vfByParent, paByHistory, activeVfParentId
       if (!map[key]) map[key] = { label: dateLabel(item.scheduledAt), items: [] };
       map[key].items.push(item);
     }
-    return Object.entries(map).sort(([a],[b])=>Number(a)-Number(b)).map(([,g])=>g);
+    return Object.entries(map).sort(([a],[b])=>Number(a)-Number(b)).map(([dayKey,g])=>({...g, dayKey}));
   }, [items, filterDay]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {groups.map((group, gi) => (
-        <div key={gi}>
+        <div key={group.dayKey ?? "single"}>
           {group.label && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, margin: gi > 0 ? "18px 0 10px" : "0 0 10px" }}>
               <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
