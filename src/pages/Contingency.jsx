@@ -1087,7 +1087,7 @@ export default function Contingency() {
           textAlign:"center", minWidth:80, flex:"0 0 auto", transition:"all 0.15s",
         }}>
           <div style={{ fontSize:20, fontWeight:800, color:"var(--accent-light)" }}>{accounts.length}</div>
-          <div style={{ fontSize:10, color:"var(--muted)", marginTop:2 }}>Total</div>
+          <div style={{ fontSize:10, color:"var(--text)", marginTop:2 }}>Total</div>
         </button>
         {STATUS_OPTIONS.map((s) => (
           <button key={s.value} onClick={() => setFilterStatus((f) => f===s.value ? "todas" : s.value)} style={{
