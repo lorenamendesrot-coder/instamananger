@@ -28,44 +28,42 @@ async function getFreshToken(accountId) {
 }
 
 // FIX: checa status_code E status para pegar o erro real do Instagram
+// checkContainer faz UM único check por chamada — sem loop de retries interno.
+// O scheduler já reagenda a cada 90s; múltiplos checks aqui só consomem tempo
+// de função e arriscam estourar o timeout de 26s da Netlify Function.
 async function checkContainer(creationId, token) {
-  for (let i = 0; i < 3; i++) {
-    if (i > 0) await sleep(4000);
-    try {
-      const r = await fetch(`${graph(token)}/${creationId}?fields=status_code,status&access_token=${token}`);
-      const d = await r.json();
+  try {
+    const r = await fetch(`${graph(token)}/${creationId}?fields=status_code,status&access_token=${token}`);
+    const d = await r.json();
 
-      // FIX: retorna o erro real da API em vez de mensagem genérica
-      if (d.error) {
-        console.error(`[publish-finish] API error para container ${creationId}:`, d.error);
-        // CRÍTICO: passar errorCode para o SW detectar rate limit (code 4) e reagendar
-        // Sem isso, isRateLimit no SW fica false e a conta é abandonada em vez de reagendada
-        return { ready: false, expired: true, error: `${d.error.message} (code ${d.error.code})`, errorCode: d.error.code };
-      }
-
-      console.log(`[publish-finish] container ${creationId} — status_code: ${d.status_code}, status: ${d.status || "n/a"} (check ${i + 1}/3)`);
-
-      if (d.status_code === "FINISHED") return { ready: true };
-      if (d.status_code === "ERROR") {
-        const subcode = d.error_subcode || null;
-        const igMsg   = d.error_message || d.status || "ERROR";
-        const detail  = subcode ? `${igMsg} (subcode ${subcode})` : igMsg;
-        console.error(`[publish-finish] container ${creationId} ERRO Instagram: ${detail}`);
-        return { ready: false, error: `Instagram rejeitou o vídeo: ${detail}`, errorCode: subcode };
-      }
-      // IN_PROGRESS ou outro: continua esperando
-    } catch (e) {
-      console.warn(`[publish-finish] exceção ao checar ${creationId}:`, e.message);
+    if (d.error) {
+      console.error(`[publish-finish] API error para container ${creationId}:`, d.error);
+      return { ready: false, expired: true, error: `${d.error.message} (code ${d.error.code})`, errorCode: d.error.code };
     }
+
+    console.log(`[publish-finish] container ${creationId} — status_code: ${d.status_code}, status: ${d.status || "n/a"}`);
+
+    if (d.status_code === "FINISHED") return { ready: true };
+    if (d.status_code === "ERROR") {
+      const subcode = d.error_subcode || null;
+      const igMsg   = d.error_message || d.status || "ERROR";
+      const detail  = subcode ? `${igMsg} (subcode ${subcode})` : igMsg;
+      console.error(`[publish-finish] container ${creationId} ERRO Instagram: ${detail}`);
+      return { ready: false, error: `Instagram rejeitou o vídeo: ${detail}`, errorCode: subcode };
+    }
+
+    // IN_PROGRESS ou status desconhecido — scheduler vai reagendar
+    return { ready: false, not_ready: true };
+  } catch (e) {
+    console.warn(`[publish-finish] exceção ao checar ${creationId}:`, e.message);
+    return { ready: false, not_ready: true };
   }
-  // Ainda IN_PROGRESS após 3 checks — scheduler vai tentar de novo
-  return { ready: false, not_ready: true };
 }
 
 // Tenta publicar com até 3 tentativas para o caso de "Media ID not available"
 async function tryPublish(accountId, creationId, token, username) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await sleep(4000);
+    if (attempt > 0) await sleep(2000); // 2s é suficiente para "Media ID not available" — 4s arriscava estourar o timeout
     try {
       const pRes  = await fetch(`${graph(token)}/${accountId}/media_publish`, {
         method:  "POST",
