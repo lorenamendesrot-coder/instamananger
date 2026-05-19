@@ -52,8 +52,8 @@ function json(data, status = 200, req = null) {
 // O blob agora guarda apenas { items } — o campo "etag" foi removido do JSON.
 // Blobs antigos no formato { etag, items } são tratados de forma compatível.
 
-const MAX_RETRIES = 5;
-const BASE_DELAY  = 80; // ms
+const MAX_RETRIES = 10;
+const BASE_DELAY  = 150; // ms
 
 async function readWithEtag(store) {
   try {
