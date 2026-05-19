@@ -1,8 +1,6 @@
 import { useMemo, useState, useCallback } from "react";
-import { useAccounts } from "../App.jsx";
-import { useScheduler } from "../App.jsx";
-import { useHistory }   from "../App.jsx";
-import { NavLink }      from "react-router-dom";
+import { useAccounts, useScheduler, useHistory } from "../App.jsx";
+import { NavLink } from "react-router-dom";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function fmt(n) {

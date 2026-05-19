@@ -79,6 +79,16 @@ export default function Queue() {
   const [sortBy,       setSortBy]       = useState("time_asc");
   const [search,       setSearch]       = useState("");
   const [showSortMenu, setShowSortMenu] = useState(false);
+  const sortMenuRef = useRef(null);
+
+  // Fecha o dropdown ao clicar fora
+  useEffect(() => {
+    const handler = (e) => {
+      if (sortMenuRef.current && !sortMenuRef.current.contains(e.target)) setShowSortMenu(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
   const [selected,     setSelected]     = useState(new Set());
   const [selecting,    setSelecting]    = useState(false);
   const [forcingId,    setForcingId]    = useState(null);
@@ -259,7 +269,7 @@ export default function Queue() {
             <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
                 <input type="search" placeholder="🔍 Buscar conta, tipo, legenda..." value={search} onChange={e=>setSearch(e.target.value)} style={{flex:1,fontSize:12}} />
-                <div style={{position:"relative"}}>
+                <div ref={sortMenuRef} style={{position:"relative"}}>
                   <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={()=>setShowSortMenu(p=>!p)}>
                     ⇅ {SORT_OPTIONS.find(o=>o.value===sortBy)?.label.replace(/^[^\s]+\s/,"")||"Ordem"}
                   </button>
@@ -699,7 +709,7 @@ function QueueItem({ item, vfItems, paItems, hasActiveVf, onEdit, onRemove, onFo
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>@{sub.username}</span>
                       {sub.status === "error" && sub.attempts && (
-                        <span style={{ fontSize: 10, color: "var(--muted)", marginLeft: 6 }}>tentativa {sub.attempts}/40</span>
+                        <span style={{ fontSize: 10, color: "var(--muted)", marginLeft: 6 }}>tentativa {sub.attempts}/{sub.maxAttempts ?? 4}</span>
                       )}
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
