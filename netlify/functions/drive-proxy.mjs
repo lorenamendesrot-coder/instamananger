@@ -72,13 +72,27 @@ async function downloadFromDrive(fileId, accessToken) {
     throw new Error(`Drive API retornou ${res.status}`);
   }
 
+  // Verifica Content-Type antes de baixar o body.
+  // O Drive às vezes retorna 200 OK com uma página HTML de confirmação para
+  // arquivos grandes (>25MB) mesmo com access_token válido — nesse caso o buffer
+  // conteria HTML, que sanitizeMP4 ignoraria silenciosamente e a Meta rejeitaria
+  // com erro genérico sem diagnóstico. Falhar aqui dá uma mensagem clara.
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("text/html")) {
+    throw new Error(
+      "Drive retornou uma página HTML em vez do arquivo de mídia. " +
+      "Isso ocorre para arquivos grandes que precisam de confirmação de download. " +
+      "Verifique se o arquivo tem permissão pública e tente novamente."
+    );
+  }
+
   const sizeHeader = res.headers.get("content-length");
   const sizeBytes  = sizeHeader ? parseInt(sizeHeader) : null;
   if (sizeBytes && sizeBytes > 1_073_741_824) {
     throw new Error(`Arquivo muito grande: ${(sizeBytes / 1e6).toFixed(0)}MB (max 1GB)`);
   }
 
-  console.log(`[drive-proxy] ${sizeBytes ? (sizeBytes / 1e6).toFixed(1) + "MB" : "tamanho desconhecido"}`);
+  console.log(`[drive-proxy] ${sizeBytes ? (sizeBytes / 1e6).toFixed(1) + "MB" : "tamanho desconhecido"} content-type: ${contentType}`);
   const buffer = await res.arrayBuffer();
   return { buffer, sizeBytes: buffer.byteLength };
 }
