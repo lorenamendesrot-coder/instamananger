@@ -862,12 +862,16 @@ export default function Contingency() {
 
   const filtered = accounts.filter((a) => {
     const q = search.toLowerCase();
+    const status = normalizeStatus(a.status);
     return (!q || (a.username||"").toLowerCase().includes(q) || (a.nome||"").toLowerCase().includes(q))
-      && (filterStatus === "todas" || a.status === filterStatus);
+      && (filterStatus === "todas" || status === filterStatus);
   });
 
+  // Normaliza status antigos ("preparada") para o equivalente atual
+  const normalizeStatus = (s) => s === "preparada" ? "em_edicao" : s;
+
   const counts = STATUS_OPTIONS.reduce((acc, s) => {
-    acc[s.value] = accounts.filter((a) => a.status === s.value).length; return acc;
+    acc[s.value] = accounts.filter((a) => normalizeStatus(a.status) === s.value).length; return acc;
   }, {});
 
   // ── Seleção em lote ──────────────────────────────────────────────────────────
@@ -1076,10 +1080,15 @@ export default function Contingency() {
 
       {/* Resumo */}
       <div style={{ display:"flex", gap:8, marginBottom:16, overflowX: isMobile?"auto":"visible", flexWrap: isMobile?"nowrap":"wrap", paddingBottom: isMobile?4:0 }}>
-        <div className="card card-sm" style={{ minWidth:80, flex:"0 0 auto", textAlign:"center" }}>
+        <button onClick={() => { setFilterStatus("todas"); setSearch(""); }} style={{
+          background: filterStatus==="todas" && !search ? "rgba(124,92,252,0.12)" : "var(--bg2)",
+          border:`1px solid ${filterStatus==="todas" && !search ? "rgba(124,92,252,0.5)" : "var(--border)"}`,
+          borderRadius:"var(--radius)", padding:"8px 12px", cursor:"pointer",
+          textAlign:"center", minWidth:80, flex:"0 0 auto", transition:"all 0.15s",
+        }}>
           <div style={{ fontSize:20, fontWeight:800, color:"var(--accent-light)" }}>{accounts.length}</div>
           <div style={{ fontSize:10, color:"var(--muted)", marginTop:2 }}>Total</div>
-        </div>
+        </button>
         {STATUS_OPTIONS.map((s) => (
           <button key={s.value} onClick={() => setFilterStatus((f) => f===s.value ? "todas" : s.value)} style={{
             background: filterStatus===s.value ? s.bg : "var(--bg2)",
