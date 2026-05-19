@@ -398,7 +398,7 @@ async function processPerAccount(store, item) {
         caption:     item.caption || "",
         createdAt:   new Date().toISOString(),
         attempts:    0,
-        maxAttempts: 20, // ~30 minutos de margem (20 checks × 90s) — era 40×30s=20min
+        maxAttempts: 4, // 4 checks × ~5min de scheduler = ~20min máximo
       });
       // Marca o sub-item como aguardando video_finish (não done ainda)
       await queueUpdate(store, { ...item, status: "done", awaitingVideoFinish: true });
@@ -625,8 +625,8 @@ export default async function handler(request) {
   // Grupos (type="group") nunca ficam "running" por muito tempo — eles só
   // transitam para running durante a explosão em sub-itens (< 2s).
   // per_account travados: 5 min de margem.
-  const STUCK_MS_PERACCCOUNT = 5 * 60 * 1000;
-  const STUCK_MS_VF          = 15 * 60 * 1000;
+  const STUCK_MS_PERACCCOUNT = 5 * 60 * 1000;   // 5 min — timeout do publish + margem
+  const STUCK_MS_VF          = 25 * 60 * 1000;  // 25 min — 4 checks × 5min + folga
 
   const stuckItems = queue.filter((x) => {
     if (x.status !== "running") return false;
