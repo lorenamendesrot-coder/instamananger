@@ -3,6 +3,54 @@ import { useState, useCallback, useRef } from "react";
 import DrivePicker from "../DrivePicker.jsx";
 import { useDriveAuth } from "../../useDriveAuth.js";
 
+// ── Transcodagem para padrão Instagram (H.264/AAC/faststart) ──────────────────
+// Usa @ffmpeg/ffmpeg via CDN — só carrega quando necessário
+let _ffmpegInstance = null;
+async function getFFmpeg() {
+  if (_ffmpegInstance) return _ffmpegInstance;
+  const { FFmpeg } = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js");
+  const { toBlobURL } = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js");
+  const ff = new FFmpeg();
+  const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm";
+  await ff.load({
+    coreURL:   await toBlobURL(`${baseURL}/ffmpeg-core.js`,   "text/javascript"),
+    wasmURL:   await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+  });
+  _ffmpegInstance = ff;
+  return ff;
+}
+
+async function transcodeForInstagram(arrayBuffer, fileName, onProgress) {
+  // Só transcoda vídeos — imagens passam direto
+  if (!/\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(fileName)) return arrayBuffer;
+
+  onProgress?.("transcoding");
+  const ff   = await getFFmpeg();
+  const ext  = fileName.split(".").pop();
+  const inF  = `in_${Date.now()}.${ext}`;
+  const outF = `out_${Date.now()}.mp4`;
+
+  ff.on("progress", ({ progress }) => onProgress?.("transcoding", Math.round(progress * 100)));
+
+  await ff.writeFile(inF, new Uint8Array(arrayBuffer));
+  await ff.exec([
+    "-i", inF,
+    "-vcodec", "libx264", "-profile:v", "main", "-level", "4.0",
+    "-acodec", "aac", "-ar", "48000", "-b:a", "128k",
+    "-movflags", "+faststart",
+    "-crf", "23",
+    "-preset", "fast",
+    "-y", outF,
+  ]);
+
+  const data = await ff.readFile(outF);
+  await ff.deleteFile(inF).catch(() => {});
+  await ff.deleteFile(outF).catch(() => {});
+
+  return data.buffer;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const MEDIA_ACCEPT = "video/*,image/*";
 const MEDIA_EXTS   = /\.(mp4|mov|avi|mkv|webm|m4v|jpg|jpeg|png|webp|gif|heic|heif)$/i;
 
@@ -50,8 +98,8 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
   const driveImportError = driveImportState?.error || null;
 
   // Helpers para atualizar estado e persistir no localStorage
-  function setImportProgress(current, total, currentName) {
-    const s = { active: true, current, total, currentName };
+  function setImportProgress(current, total, currentName, stage) {
+    const s = { active: true, current, total, currentName, stage: stage || null };
     setDriveImportState(s);
     try { localStorage.setItem(IMPORT_KEY, JSON.stringify(s)); } catch {}
   }
@@ -215,23 +263,52 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
                         const task = queue[queuePos++];
                         if (!task) break;
                         const { v, idx } = task;
-                        
-                        setImportProgress(completed, pickedVideos.length, v.name);
-                        const res  = await fetch("/api/drive-proxy", {
+                        const isVideo = /\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(v.name);
+
+                        // 1. Baixar do Drive como blob binário
+                        setImportProgress(completed, pickedVideos.length, v.name, "⬇️ baixando");
+                        const dlRes = await fetch("/api/drive-proxy", {
                           method:  "POST",
                           headers: { "Content-Type": "application/json" },
-                          body:    JSON.stringify({ file_id: v.id, file_name: v.name, refresh_token }),
+                          body:    JSON.stringify({ file_id: v.id, file_name: v.name, refresh_token, return_blob: true }),
                         });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || `Erro ao importar "${v.name}"`);
-                        urls[idx] = data.url;
+                        if (!dlRes.ok) {
+                          const d = await dlRes.json().catch(() => ({}));
+                          throw new Error(d.error || `Erro ao baixar "${v.name}"`);
+                        }
+
+                        // 2. Transcodar para H.264/AAC no browser (só vídeos)
+                        let finalBlob;
+                        if (isVideo) {
+                          setImportProgress(completed, pickedVideos.length, v.name, "⚙️ convertendo...");
+                          const rawBuffer = await dlRes.arrayBuffer();
+                          const converted = await transcodeForInstagram(rawBuffer, v.name,
+                            (_stage, pct) => pct != null && setImportProgress(completed, pickedVideos.length, v.name, `⚙️ convertendo ${pct}%`)
+                          );
+                          finalBlob = new Blob([converted], { type: "video/mp4" });
+                        } else {
+                          finalBlob = await dlRes.blob();
+                        }
+
+                        // 3. Salvar o arquivo convertido nos Netlify Blobs via drive-proxy PUT
+                        setImportProgress(completed, pickedVideos.length, v.name, "☁️ salvando");
+                        const outName = isVideo ? v.name.replace(/\.[^.]+$/, ".mp4") : v.name;
+                        const form    = new FormData();
+                        form.append("file",          finalBlob, outName);
+                        form.append("file_id",       v.id);
+                        form.append("refresh_token", refresh_token);
+                        const upRes  = await fetch("/api/drive-proxy", { method: "PUT", body: form });
+                        const upData = await upRes.json();
+                        if (!upRes.ok) throw new Error(upData.error || `Erro ao salvar "${v.name}"`);
+
+                        urls[idx] = upData.url;
                         completed++;
                         if (completed >= pickedVideos.length) {
                           const validUrls = urls.filter(Boolean);
                           if (validUrls.length) onAddUrl(typeConfig.id, validUrls);
                           setImportDone();
                         } else {
-                          setImportProgress(completed, pickedVideos.length, v.name);
+                          setImportProgress(completed, pickedVideos.length, v.name, "✅");
                         }
                       }
                     }
@@ -283,7 +360,9 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
             }} />
           </div>
           <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 5 }}>
-            🛡 Limpando metadados e gerando URLs seguras... Pode mudar de aba.
+            {driveImportState.stage && driveImportState.stage !== "✅"
+              ? driveImportState.stage
+              : "🛡 Convertendo para padrão Instagram (H.264/AAC)... Pode mudar de aba."}
           </div>
         </div>
       )}
