@@ -7,11 +7,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ffmpeg/core-mt": "^0.12.6",
+    "@ffmpeg/ffmpeg": "^0.12.10",
+    "@netlify/blobs": "^8.1.0",
+    "@netlify/functions": "^2.6.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^6.21.0",
-    "@netlify/functions": "^2.6.0",
-    "@netlify/blobs": "^8.1.0"
+    "react-router-dom": "^6.21.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",

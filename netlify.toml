@@ -21,6 +21,12 @@
   targetPort = 5173
 
 [[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy   = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+
+[[headers]]
   for = "/api/auth-callback*"
   [headers.values]
     Cross-Origin-Opener-Policy = "unsafe-none"
