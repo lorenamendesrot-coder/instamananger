@@ -10,9 +10,8 @@ async function getFFmpeg() {
   const { FFmpeg } = await import("@ffmpeg/ffmpeg");
   const ff = new FFmpeg();
   await ff.load({
-    coreURL:   "/ffmpeg/ffmpeg-core.js",
-    wasmURL:   "/ffmpeg/ffmpeg-core.wasm",
-    workerURL: "/ffmpeg/ffmpeg-core.worker.js",
+    coreURL: "/ffmpeg/ffmpeg-core.js",
+    wasmURL: "/ffmpeg/ffmpeg-core.wasm",
   });
   _ffmpegInstance = ff;
   return ff;
@@ -90,7 +89,15 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
   const abortRef  = useRef(false);
   const IMPORT_KEY = `driveImport_${typeConfig.id}`;
   const [driveImportState, setDriveImportState] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(IMPORT_KEY) || "null"); } catch { return null; }
+    try {
+      const saved = JSON.parse(localStorage.getItem(IMPORT_KEY) || "null");
+      // Se estava convertendo quando a página foi recarregada, limpa — não tem como retomar
+      if (saved?.active && saved?.stage && saved.stage.includes("convertendo")) {
+        localStorage.removeItem(IMPORT_KEY);
+        return null;
+      }
+      return saved;
+    } catch { return null; }
   });
   const driveImporting = driveImportState?.active === true;
   const driveImportError = driveImportState?.error || null;
@@ -116,6 +123,11 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
   }
   function cancelImport() {
     abortRef.current = true;
+    // Mata a instância do FFmpeg se estiver rodando
+    if (_ffmpegInstance) {
+      try { _ffmpegInstance.terminate(); } catch {}
+      _ffmpegInstance = null;
+    }
     try { localStorage.removeItem(IMPORT_KEY); } catch {}
     setDriveImportState(null);
   }
