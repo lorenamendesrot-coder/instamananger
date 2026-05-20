@@ -21,10 +21,9 @@
   targetPort = 5173
 
 [[headers]]
-  for = "/*"
+  for = "/ffmpeg/*"
   [headers.values]
-    Cross-Origin-Opener-Policy   = "same-origin"
-    Cross-Origin-Embedder-Policy = "require-corp"
+    Cross-Origin-Resource-Policy = "cross-origin"
 
 [[headers]]
   for = "/api/auth-callback*"
