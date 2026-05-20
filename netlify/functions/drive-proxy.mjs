@@ -289,16 +289,53 @@ export default async function handler(req) {
     }
   }
 
+  // PUT — recebe blob já convertido no browser e salva nos Netlify Blobs
+  if (req.method === "PUT") {
+    try {
+      const formData  = await req.formData();
+      const file      = formData.get("file");
+      const file_id   = formData.get("file_id");
+      if (!file || !file_id) return json({ error: "file e file_id obrigatorios" }, 400);
+
+      const buffer   = await file.arrayBuffer();
+      const arr      = new Uint8Array(buffer);
+      const fileName = file.name || "video.mp4";
+      const blobKey  = `video-${file_id}-transcoded`;
+
+      const store = getVideoStore();
+      await store.set(blobKey, arr, {
+        metadata: { name: fileName, size: String(arr.byteLength), sanitized: "true", transcoded: "true" },
+      });
+
+      const proxyUrl = `${SITE_URL}/.netlify/functions/drive-proxy?key=${blobKey}`;
+      return json({ url: proxyUrl, blob_key: blobKey, size: arr.byteLength, transcoded: true });
+    } catch (err) {
+      return json({ error: err.message || "Erro ao salvar blob" }, 500);
+    }
+  }
+
   // POST — baixa do Drive e armazena (chamado pelo DrivePicker E pelo scheduler no loop)
   if (req.method === "POST") {
     let body;
     try { body = await req.json(); }
     catch { return json({ error: "JSON invalido" }, 400); }
 
-    const { file_id, file_name, refresh_token, account_id, force_refresh } = body;
+    const { file_id, file_name, refresh_token, account_id, force_refresh, return_blob } = body;
 
     if (!file_id)       return json({ error: "file_id obrigatorio" }, 400);
     if (!refresh_token) return json({ error: "refresh_token obrigatorio" }, 400);
+
+    // return_blob=true — só baixa e devolve os bytes brutos (transcodagem acontece no browser)
+    if (return_blob) {
+      try {
+        const accessToken           = await renewAccessToken(refresh_token);
+        const { buffer, sizeBytes } = await downloadFromDrive(file_id, accessToken);
+        const mime = /\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(file_name || "") ? "video/mp4" : "application/octet-stream";
+        return new Response(buffer, { status: 200, headers: { ...headers, "Content-Type": mime, "Content-Length": String(sizeBytes) } });
+      } catch (err) {
+        return json({ error: err.message }, 500);
+      }
+    }
 
     // Cache hit: se o blob já existe e foi feito há menos de 6h, reutiliza.
     // Evita re-baixar o vídeo a cada tick do loop (economiza invocações + largura de banda).
