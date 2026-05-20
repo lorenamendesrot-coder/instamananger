@@ -4,17 +4,25 @@ import DrivePicker from "../DrivePicker.jsx";
 import { useDriveAuth } from "../../useDriveAuth.js";
 
 // ── Transcodagem para padrão Instagram (H.264/AAC/faststart) ──────────────────
-// Usa @ffmpeg/ffmpeg via CDN — só carrega quando necessário
+// Usa @ffmpeg/ffmpeg single-thread (sem Worker) para evitar restrições de CORS
 let _ffmpegInstance = null;
 async function getFFmpeg() {
   if (_ffmpegInstance) return _ffmpegInstance;
+
+  // Carrega os scripts como blob URLs para contornar restrições de CORS com Workers
+  async function toBlobURL(url, mimeType) {
+    const res  = await fetch(url);
+    const blob = new Blob([await res.arrayBuffer()], { type: mimeType });
+    return URL.createObjectURL(blob);
+  }
+
   const { FFmpeg } = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js");
-  const { toBlobURL } = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js");
-  const ff = new FFmpeg();
-  const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm";
+  const ff      = new FFmpeg();
+  const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm";
   await ff.load({
-    coreURL:   await toBlobURL(`${baseURL}/ffmpeg-core.js`,   "text/javascript"),
-    wasmURL:   await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+    coreURL:      await toBlobURL(`${baseURL}/ffmpeg-core.js`,      "text/javascript"),
+    wasmURL:      await toBlobURL(`${baseURL}/ffmpeg-core.wasm`,    "application/wasm"),
+    workerURL:    await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, "text/javascript"),
   });
   _ffmpegInstance = ff;
   return ff;
